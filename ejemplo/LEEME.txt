@@ -1,0 +1,13 @@
+practica_demo.pkt NO es un archivo de Packet Tracer de verdad.
+
+Lo genera prueba_topologia.py para probar el lector: arma un XML con la
+estructura de una topologia, lo empaqueta con el mismo cifrado que usa
+Packet Tracer 9 (ofuscacion + Twofish-EAX + zlib) y lo vuelve a leer.
+
+Sirve para verificar que el descifrado y el calculo de rutas funcionan sin
+tener Packet Tracer instalado, pero Packet Tracer no lo puede abrir: adentro
+no lleva un proyecto completo, solo los datos minimos que necesita la prueba.
+Si lo intentas, sale el error de version ("...is 9.0.1.0858").
+
+Para probar con una practica de verdad, abre tu propio .pkt desde el
+programa (F1, o arrastrandolo sobre Analizar.bat).

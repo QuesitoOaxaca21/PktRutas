@@ -1,0 +1,53 @@
+﻿PktRutas
+========
+
+Lee tus prácticas de Cisco Packet Tracer (archivos .pkt, versiones 8.2 a 9.x)
+y genera lo que falta: hostnames, enlaces, ruteo estático, VLANs, SVI o
+subinterfaces, DHCP, troncales, EtherChannel, STP y puertos de acceso. Si la
+práctica está en blanco, la configura completa con lo que pones en el lienzo:
+el nombre de cada equipo y las notas. Puedes pegar los comandos equipo por
+equipo o guardar una copia del .pkt con todo ya aplicado.
+
+
+Qué necesitas
+-------------
+Windows y Python 3.10 o más nuevo, de https://www.python.org/downloads/
+
+Instálalo con las opciones que trae marcadas: incluyen tkinter (la ventana)
+y el lanzador "py". No hace falta instalar nada más.
+
+
+Cómo instalarlo
+---------------
+1. Descomprime la carpeta PktRutas completa (clic derecho en el .zip,
+   "Extraer todo"). No lo abras desde dentro del .zip.
+2. Doble clic en Instalar.bat. Queda en el menú Inicio, en el escritorio y
+   en "Enviar a" (clic derecho sobre un .pkt, Enviar a, PktRutas). Se instala
+   sólo para tu usuario, sin permisos de administrador.
+3. En la ventana, F1 carga el .pkt y F2 muestra los comandos, equipo por
+   equipo. La guía de uso está en el menú Ayuda (es GUIA.html).
+
+Para actualizarlo, corre el Instalar.bat de la versión nueva. Para quitarlo:
+Configuración, Aplicaciones, PktRutas, Desinstalar.
+
+Sin instalar: doble clic en Analizar.bat, dentro de la carpeta. También
+puedes arrastrar un .pkt encima y la ventana abre con el archivo ya cargado.
+
+Si falta Python o es muy viejo, Instalar.bat y Analizar.bat te lo dicen. Si
+la ventana no llega a abrir, el detalle queda en error.log, en la carpeta del
+programa.
+
+
+Qué archivos son
+----------------
+Instalar.bat       instala el programa (menú Inicio, escritorio y Enviar a)
+Analizar.bat       abre el programa sin instalarlo
+app.py             la ventana
+analizar.py        la versión de línea de comandos, sin ventana
+instalar.py        lo que usa Instalar.bat, y también para desinstalar
+pkt\  y  ui\       el programa en sí; no los muevas
+pktrutas.ico       el ícono
+GUIA.html          guía de uso
+README.md          descripción y referencia de las notas
+docs\              detalles técnicos y capturas
+prueba_*.py        pruebas del programa (opcionales; no hacen falta para usarlo)

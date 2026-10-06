@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+
+# Lo que escribe el programa junto a las prácticas
+error.log
+*_ruteo.txt
+*_config.txt
+
+# Las prácticas de Packet Tracer no se suben
+*.pkt
+*.pka
+
+# Lo que generan las pruebas
+ejemplo/practica_demo*
+
+# Los zip para publicar
+dist/

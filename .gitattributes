@@ -1,0 +1,12 @@
+# En el repositorio el texto va con LF. Los .bat y los .txt salen con CRLF en
+# cualquier copia, también en el zip que arma GitHub: cmd necesita CRLF para
+# encontrar las etiquetas de los .bat.
+* text=auto
+*.bat text eol=crlf
+*.txt text eol=crlf
+*.png binary
+*.ico binary
+
+# Fuera del zip de cada versión
+.gitattributes export-ignore
+.gitignore export-ignore
