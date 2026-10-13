@@ -336,11 +336,30 @@ VLAN 4  16.0.0.128 - 16.0.0.255   - 255.255.255.128 gw 16.0.0.254</pre>
 <span class="p">SWR1(config-if)#</span> ip address 16.0.0.42 255.255.255.252</pre>
       </div>
     </div>
-    <p>Si te equivocas en un enlace (la IP de otro enlace, una máscara distinta, un lado sin IP o un
-      puerto apagado), el programa lo corrige, pone el comando en ese equipo y te dice por qué en la
-      sección 6 del reporte.</p>
+    <p>Si te equivocas en un enlace (la IP de otro enlace, una máscara distinta, un lado sin IP, un
+      puerto apagado, o los dos lados en redes distintas), el programa lo corrige, pone el comando en
+      ese equipo y te dice por qué en la sección 6 del reporte. Cuando nada dice cuál lado está mal,
+      decide la nota del enlace; sin nota, se queda la red del primer equipo y te avisa.</p>
 
-    <h3>1.6 Guarda</h3>
+    <h3>1.6 Si la práctica quedó a medias o mal hecha</h3>
+    <p>Ábrela tal cual en el programa. Lo que falta se completa, y lo que el mismo comando reemplaza
+      se corrige solo (la IP de una SVI, la VLAN de un puerto, el nombre de una VLAN). Si un equipo
+      tiene errores que no se quitan agregando comandos, <strong>se rehace desde cero</strong>: su
+      bloque empieza con los <code>NO …</code> que borran lo que tenía y sigue con su configuración
+      completa, ya correcta.</p>
+    <ul>
+      <li>Una ruta por la que el tráfico no llega (da vueltas o se pierde). Una que llega por un camino
+        más largo, como en un anillo, se respeta.</li>
+      <li>Un pool de DHCP que cubre la red de una VLAN y no es el suyo.</li>
+      <li>Un EtherChannel que no se forma, o en puertos que no van en canal (PAgP también se vale).</li>
+      <li>Una prioridad de STP que le compite a la raíz de su red.</li>
+      <li>En un router-on-a-stick, una IP suelta en el puerto de las subinterfaces o una subinterfaz con
+        la VLAN cambiada.</li>
+    </ul>
+    <p>Las contraseñas, ACL o NAT que tenga el equipo no se tocan. La barra de estado dice qué equipos
+      se rehacen, y el reporte (<kbd>Ctrl</kbd>+<kbd>R</kbd>), por qué.</p>
+
+    <h3>1.7 Guarda</h3>
     <p>Guarda con <kbd>Ctrl</kbd>+<kbd>S</kbd> en Packet Tracer antes de abrir el archivo en el
       programa. Lee el archivo como está en disco: lo que no hayas guardado no lo ve.</p>
   </section>
@@ -373,6 +392,7 @@ VLAN 4  16.0.0.128 - 16.0.0.255   - 255.255.255.128 gw 16.0.0.254</pre>
         <tbody>
           <tr><td>«N equipo(s) por configurar»</td><td>La hoja trae lo que le falta a cada uno.</td></tr>
           <tr><td>«No le falta nada»</td><td>La práctica ya está completa: la hoja trae la configuración entera de cada equipo, por si quieres rehacer alguno.</td></tr>
+          <tr><td>«Se rehacen desde cero: …»</td><td>Esos equipos tienen errores que no se quitan agregando comandos: su bloque empieza borrando lo que tenían (<code>NO …</code>) y sigue con su configuración completa (ver 1.6).</td></tr>
           <tr><td>«N error(es) y M aviso(s)»</td><td>Algo de la práctica o de las notas hay que revisarlo: abre <strong>Ver → Reporte completo</strong> (<kbd>Ctrl</kbd>+<kbd>R</kbd>).</td></tr>
           <tr><td>Lín., col., zoom…</td><td>Como en el Bloc de notas: dónde está el cursor, el zoom, el fin de línea y la codificación.</td></tr>
         </tbody>

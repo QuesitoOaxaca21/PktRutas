@@ -284,7 +284,7 @@ def _aplicar(c, disp, ifaz, ip, mascara, comentario, nota):
 # Casos
 # ==========================================================================
 
-def _dos_lados(topo, c, vis, vlans, comun, a, ia, b, ib):
+def _dos_lados(topo, c, vis, vlans, comun, a, ia, b, ib, nota=None, base=None):
     """Los dos extremos tienen IP pero en redes distintas."""
     ra, rb = _red(ia), _red(ib)
     if ra is None or rb is None:
@@ -297,22 +297,23 @@ def _dos_lados(topo, c, vis, vlans, comun, a, ia, b, ib):
     llave = clave_cable(a.nombre, ia.nombre, b.nombre, ib.nombre)
     sa = _sospechas(topo, vis, vlans, comun, ia, ib)
     sb = _sospechas(topo, vis, vlans, comun, ib, ia)
+    adivinado = False
     if bool(sa) == bool(sb):
-        opciones = []
-        for dmal, imal, ibien in ((b, ib, ia), (a, ia, ib)):
-            ip = _host_libre(topo, _red(ibien), ipaddress.IPv4Address(imal.ip), imal)
-            if ip:
-                opciones.append("%s%s en %s %s" % (
-                    ip, "" if imal.mascara == ibien.mascara else " " + ibien.mascara,
-                    vis[dmal.nombre], imal.nombre))
-        c.revisados.add(llave)
-        c.hallazgos.append(Hallazgo(ERROR, "red",
-            "El enlace %s %s (%s/%d) - %s %s (%s/%d) une dos subredes distintas y "
-            "no hay cómo saber qué lado está mal%s"
-            % (vis[a.nombre], ia.nombre, ia.ip, ra.prefixlen,
-               vis[b.nombre], ib.nombre, ib.ip, rb.prefixlen,
-               ": pon " + ", o ".join(opciones) if opciones else "")))
-        return
+        # Nada en la red dice qué lado está mal. Decide la nota del cable, si
+        # la hay; si no, se queda el primero (el router antes que el core, R1
+        # antes que R2) y el otro se pasa a su red, con un aviso.
+        de_nota = _red_de_nota(nota, base) if nota is not None else None
+        if de_nota is not None and de_nota not in (ra, rb):
+            _los_dos_de_la_nota(topo, c, vis, nota, de_nota, llave, a, ia, b, ib)
+            return
+        if de_nota is not None:
+            sa, sb = (["su nota '%s' dice %s" % (nota.texto, rb)], []) if de_nota == rb \
+                else ([], ["su nota '%s' dice %s" % (nota.texto, ra)])
+        else:
+            adivinado = True
+            sa, sb = [], ["nada dice cuál de los dos está mal: se deja la red de %s (si "
+                          "tu práctica pide la otra, pon la nota del enlace junto al "
+                          "cable)" % vis[a.nombre]]
 
     mal, imal, bien, ibien = (a, ia, b, ib) if sa else (b, ib, a, ia)
     red = _red(ibien)
@@ -328,12 +329,32 @@ def _dos_lados(topo, c, vis, vlans, comun, a, ia, b, ib):
         que = "tenía %s, pero su cable va a %s %s (%s/%d) y %s" % (
             antes, vis[bien.nombre], ibien.nombre, ibien.ip, red.prefixlen,
             "; ".join(sa or sb))
-    c.hallazgos.append(Hallazgo(ERROR, mal.nombre,
+    c.hallazgos.append(Hallazgo(AVISO if adivinado else ERROR, mal.nombre,
         "%s %s: se corrige a %s %s (va en sus comandos por aplicar)"
         % (imal.nombre, que, nueva, ibien.mascara)))
     _aplicar(c, mal, imal, nueva, ibien.mascara,
              "corrige el enlace con %s (tenia %s)" % (vis[bien.nombre], antes),
              "corregida, tenía %s" % antes)
+
+
+def _los_dos_de_la_nota(topo, c, vis, nota, red, llave, a, ia, b, ib):
+    """Ninguno de los dos lados está en la red que dice la nota del cable: los
+    dos se pasan a ella, si nadie más la usa."""
+    if _dentro(topo, red, (ia, ib)):
+        return
+    c.revisados.add(llave)
+    primera, segunda = (str(h) for h in red.hosts())
+    c.hallazgos.append(Hallazgo(ERROR, "red",
+        "El enlace %s %s (%s) - %s %s (%s) no está en la red de su nota '%s': se pasa a "
+        "%s (%s .%s, %s .%s; va en sus comandos por aplicar)"
+        % (vis[a.nombre], ia.nombre, ia.ip, vis[b.nombre], ib.nombre, ib.ip, nota.texto,
+           red, vis[a.nombre], primera.rsplit(".", 1)[1], vis[b.nombre],
+           segunda.rsplit(".", 1)[1])))
+    for disp, ifaz, ip in ((a, ia, primera), (b, ib, segunda)):
+        antes = ifaz.ip
+        _aplicar(c, disp, ifaz, ip, str(red.netmask),
+                 "enlace de la nota %s (tenia %s)" % (nota.texto, antes),
+                 "corregida con su nota, tenía %s" % antes)
 
 
 def _misma_ip(topo, c, vis, red, a, ia, b, ib):
@@ -510,9 +531,9 @@ def corregir(topo) -> Correcciones:
 
     # Primero lo que ya tiene IP en los dos lados, luego lo que tiene uno y al
     # final lo que no tiene nada: así el /30 que se elija ya ve los arreglados.
-    for a, ia, b, ib in cables:
+    for j, (a, ia, b, ib) in enumerate(cables):
         if ia.configurada and ib.configurada:
-            _dos_lados(topo, c, vis, vlans, comun, a, ia, b, ib)
+            _dos_lados(topo, c, vis, vlans, comun, a, ia, b, ib, etiquetas.get(j), base)
     for a, ia, b, ib in cables:
         if ia.configurada != ib.configurada:
             _un_lado(topo, c, vis, a, ia, b, ib)

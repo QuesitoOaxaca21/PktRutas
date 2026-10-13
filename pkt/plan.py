@@ -1083,10 +1083,11 @@ def _cabecera(puertos) -> str:
 
 
 def _vlans_bd(disp, vlans) -> list:
-    # La VLAN 1 ya existe siempre y IOS no deja cambiarle el nombre.
-    existentes = {n for n, _ in disp.vlans}
+    # La VLAN 1 ya existe siempre y IOS no deja cambiarle el nombre. Una con el
+    # nombre mal escrito se vuelve a nombrar ('name' reemplaza al anterior).
+    existentes = {(n, (nombre or "").strip().lower()) for n, nombre in disp.vlans}
     return [Orden("vlan", ["vlan %d" % v.numero, " name %s" % v.nombre],
-                  v.numero in existentes) for v in vlans if v.numero != 1]
+                  (v.numero, v.nombre.lower()) in existentes) for v in vlans if v.numero != 1]
 
 
 def _troncal(disp, puerto):

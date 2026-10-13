@@ -253,15 +253,44 @@ En los enlaces /30 revisa cada cable entre routers y cores:
   primero libre desde la .4 de tus enlaces, sin pisar ninguna red, y te lo
   dice por si tu práctica pide otro.
 * **Puerto con IP pero apagado**: agrega `no shutdown`.
+* **Las dos IPs en redes distintas, sin nada que diga cuál está mal**: decide
+  la nota del enlace; sin nota, se queda la red del primer equipo (el router
+  antes que el core, R1 antes que R2) y se avisa.
 
-El arreglo va en los comandos de ese equipo, con un comentario `!` que dice qué
-se cambió, y el ruteo se calcula ya con la red corregida. Cuando los dos lados
-son igual de sospechosos no adivina: da las dos opciones y no toca nada.
+El arreglo va en los comandos de ese equipo, y el ruteo se calcula ya con la
+red corregida; el detalle de cada cambio está en el reporte.
 
 En las notas corrige erratas (`17.1.128..0`), la máscara que no cuadra con el
 rango o la diagonal, la dirección que no es de red y la puerta de enlace fuera
 de la red, y avisa cada vez. Lo que no corrige son dos VLANs que se enciman:
 no hay forma de saber cuál querías mover, así que dice cuáles chocan.
+
+### Si la práctica quedó a medias o mal hecha
+
+Ábrela tal cual. Lo que falta se completa, y lo que el mismo comando reemplaza
+se corrige solo: la IP de una SVI o subinterfaz, la VLAN de un puerto, el
+nombre de una VLAN, un enlace mal tecleado.
+
+Hay errores que no se quitan agregando comandos. El equipo que tenga alguno
+**se rehace desde cero**: su bloque empieza con los `NO ...` que borran lo que
+el programa configura (rutas, pools, prioridades de STP, subinterfaces, SVI,
+EtherChannel e IPs de los puertos) y sigue con su configuración completa, ya
+correcta. Lo demás que tenga (contraseñas, ACL, NAT...) no se toca. Esos
+errores son:
+
+* una ruta estática por la que el tráfico no llega (da vueltas o se pierde).
+  Una que llega por un camino más largo, como en un anillo, se respeta;
+* un pool de DHCP que cubre la red de una VLAN y no es el de esa VLAN;
+* un EtherChannel que no se forma (puntas en modos que no se entienden, o
+  puertos del mismo canal en grupos o modos distintos), o en puertos que no
+  van en canal. Con PAgP (`desirable` / `auto`) también se forma;
+* una prioridad de STP que le compite a la raíz de su red (4096 o menos);
+* en un router-on-a-stick: una IP suelta en el puerto de las subinterfaces,
+  una SVI con IP o una subinterfaz con la VLAN cambiada.
+
+La barra de estado dice qué equipos se rehacen y el reporte (`Ctrl+R`), por
+qué. El `.pkt` configurado hace lo mismo: limpia esos equipos y los vuelve a
+armar.
 
 ### El .pkt configurado
 

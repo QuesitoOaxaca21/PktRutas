@@ -312,9 +312,15 @@ class Aplicacion:
         # cuenta: en una práctica en blanco faltan todas.
         errores = sum(h.nivel == analisis.ERROR and not h.resuelto for h in hallazgos)
         avisos = sum(h.nivel == analisis.AVISO and not h.resuelto for h in hallazgos)
+        rehechos = reporte.desde_cero(topo, rutas)
+        if rehechos:
+            visibles = topo.nombres_visibles()
+            mensaje += " Se rehacen desde cero: %s." % ", ".join(visibles[n] for n in rehechos)
         if errores or avisos:
-            mensaje += " %d error(es) y %d aviso(s): Ver > Reporte completo." % (errores, avisos)
-        self.estado(mensaje, "aviso" if errores or avisos else "ok")
+            mensaje += " %d error(es) y %d aviso(s)." % (errores, avisos)
+        if rehechos or errores or avisos:
+            mensaje += " El porqué: Ver > Reporte completo."
+        self.estado(mensaje, "aviso" if rehechos or errores or avisos else "ok")
 
     def guardar_comandos(self):
         texto = self.contenido()
@@ -354,6 +360,8 @@ class Aplicacion:
             self.estado("No se pudo escribir el .pkt: %s" % exc, "error")
             return
         pcs = ""
+        if resumen["desde_cero"]:
+            pcs += ", %d rehecho(s) desde cero" % len(resumen["desde_cero"])
         if resumen["pcs"]:
             pcs += ", %d PC(s) en DHCP" % resumen["pcs"]
         if resumen["renombradas"]:

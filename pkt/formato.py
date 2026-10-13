@@ -28,13 +28,14 @@ SEPARADOR = "==="
 # 'interface range' antes que 'interface'.
 _ABREVIADOS = (("enable", "EN"), ("configure terminal", "CONF T"),
                ("interface range", "INT RANGE"), ("interface", "INT"),
-               ("ip address", "IP ADD"), ("no shutdown", "NO SHUT"))
+               ("no interface", "NO INT"), ("ip address", "IP ADD"),
+               ("no ip address", "NO IP ADD"), ("no shutdown", "NO SHUT"))
 _TIPOS = {"gigabitethernet": "GI", "fastethernet": "FA", "ethernet": "ETH",
           "serial": "SE", "port-channel": "PO", "loopback": "LO", "vlan": "VLAN "}
 _RE_TIPO = re.compile(r"\b(%s)\s*(?=\d)" % "|".join(sorted(_TIPOS, key=len, reverse=True)),
                       re.IGNORECASE)
 # Comandos cuyo argumento es un nombre tuyo y se respeta como está.
-_CON_NOMBRE = ("hostname ", "name ", "ip dhcp pool ")
+_CON_NOMBRE = ("hostname ", "name ", "ip dhcp pool ", "no ip dhcp pool ")
 
 
 def interfaz(texto) -> str:
@@ -49,8 +50,7 @@ def renglon(linea) -> str:
     for completo, corto in _ABREVIADOS:
         if bajo == completo or bajo.startswith(completo + " "):
             resto = s[len(completo):]
-            return corto + (interfaz(resto) if completo.startswith("interface")
-                            else resto.upper())
+            return corto + (interfaz(resto) if "interface" in completo else resto.upper())
     for prefijo in _CON_NOMBRE:
         if bajo.startswith(prefijo):
             return prefijo.upper() + s[len(prefijo):]
@@ -60,15 +60,21 @@ def renglon(linea) -> str:
 def estilo(lineas) -> list:
     """Los renglones de IOS de un equipo, sin 'enable' ni 'configure terminal',
     como bloque para pegar: EN, CONF T, lo de alcance global junto, cada
-    interfaz (o VLAN, o pool) en su párrafo, y nada de comentarios."""
-    ios = [l.rstrip() for l in lineas if l.strip() and not l.lstrip().startswith("!")]
+    interfaz (o VLAN, o pool) en su párrafo, y nada de comentarios. Un
+    comentario no sale, pero lo que sigue empieza párrafo."""
+    ios = [l.rstrip() for l in lineas if l.strip()]
     salida = ["EN", "CONF T"]
-    en_modo = False
+    en_modo = corte = False
     for i, linea in enumerate(ios):
+        if linea.lstrip().startswith("!"):
+            corte = True
+            continue
         sangria = linea.startswith(" ")
-        abre = not sangria and i + 1 < len(ios) and ios[i + 1].startswith(" ")
-        if not sangria and (abre or en_modo):
+        siguiente = next((x for x in ios[i + 1:] if not x.lstrip().startswith("!")), "")
+        abre = not sangria and siguiente.startswith(" ")
+        if not sangria and (abre or en_modo or corte) and salida[-1] != "":
             salida.append("")
+        corte = False
         salida.append(renglon(linea))
         en_modo = sangria or abre
     return salida

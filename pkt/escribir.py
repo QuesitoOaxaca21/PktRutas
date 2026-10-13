@@ -24,7 +24,7 @@ import xml.parsers.expat
 from collections import defaultdict
 from xml.sax.saxutils import escape, quoteattr
 
-from . import reporte
+from . import rehacer, reporte
 from .descifrar import cifrar_pkt, descifrar_pkt
 from .modelo import clase_de, puertos_xml
 
@@ -484,7 +484,8 @@ def configurar(datos: bytes, topo, rutas):
     raiz = ET.fromstring(datos)
     editor = _Editor(datos, raiz)
     dispositivos = _dispositivos(raiz)
-    resumen = {"equipos": [], "comandos": 0, "pcs": 0}
+    resumen = {"equipos": [], "comandos": 0, "pcs": 0, "desde_cero": []}
+    rehechos = reporte.desde_cero(topo, rutas)
 
     for disp in reporte._equipos_con_salida(topo):
         pendientes = comandos(topo, disp, rutas)
@@ -495,7 +496,12 @@ def configurar(datos: bytes, topo, rutas):
         rc_el = engine.find("RUNNINGCONFIG")
         if rc_el is None:
             continue
-        rc = RunningConfig([l.text or "" for l in rc_el]).aplicar(pendientes)
+        actuales = [l.text or "" for l in rc_el]
+        de_cero = disp.nombre in rehechos
+        if de_cero:     # se quita lo que tenía mal y se pone todo de nuevo
+            actuales = rehacer.quitar(actuales)[0]
+            resumen["desde_cero"].append(disp.nombre)
+        rc = RunningConfig(actuales).aplicar(pendientes)
         editor.lineas(rc_el, rc.l)
         sc_el = engine.find("STARTUPCONFIG")
         if sc_el is not None:                     # como después de 'write memory'
@@ -506,9 +512,12 @@ def configurar(datos: bytes, topo, rutas):
                 and (sys_name.text or "") != rc.nuevo_hostname:
             editor.valor(sys_name, rc.nuevo_hostname)
 
-        # Puertos físicos: encendido, IP y máscara, como los dejó el texto.
-        puertos = dict((n.lower(), p) for n, p in puertos_xml(engine, clase_de(device)))
-        for nombre in rc.tocadas:
+        # Puertos físicos: encendido, IP y máscara, como los dejó el texto. Al
+        # que se rehizo se le revisan todos: alguno se quedó sin IP.
+        lista = puertos_xml(engine, clase_de(device))
+        puertos = dict((n.lower(), p) for n, p in lista)
+        revisar = rc.tocadas + ([n for n, _ in lista if n not in rc.tocadas] if de_cero else [])
+        for nombre in revisar:
             port = puertos.get(nombre.lower())
             estado = rc.estado(nombre)
             if port is None or estado is None:
@@ -517,8 +526,8 @@ def configurar(datos: bytes, topo, rutas):
             nodo = port.find("POWER")
             if nodo is not None and (nodo.text or "") != ("true" if encendida else "false"):
                 editor.valor(nodo, "true" if encendida else "false")
-            if ip:
-                for tag, texto in (("IP", ip[0]), ("SUBNET", ip[1])):
+            if ip or de_cero:
+                for tag, texto in (("IP", ip[0] if ip else ""), ("SUBNET", ip[1] if ip else "")):
                     nodo = port.find(tag)
                     if nodo is not None and (nodo.text or "") != texto:
                         editor.valor(nodo, texto)
@@ -596,6 +605,7 @@ def escribir(ruta_origen, ruta_destino) -> dict:
         raise ValueError("el archivo cifrado no se pudo leer de vuelta")
     topo2, rutas2 = _analizar(vuelta)
     resumen["quedan"] = reporte.pendientes(topo2, rutas2)
+    resumen["siguen_mal"] = list(reporte.desde_cero(topo2, rutas2))
     resumen["nombres"] = [topo.nombres_visibles()[n] for n in resumen["equipos"]]
     Path(ruta_destino).write_bytes(datos)
     return resumen

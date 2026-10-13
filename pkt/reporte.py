@@ -16,7 +16,7 @@ from __future__ import annotations
 import datetime
 import re
 
-from . import formato
+from . import formato, rehacer
 from .red import ERROR, AVISO, INFO, verificar_ruteo
 
 ANCHO = 78
@@ -104,8 +104,51 @@ def _bloque(disp, nombre, ordenes, rutas_sel, ip_routing, extra=None) -> list:
     return lin
 
 
+def desde_cero(topo, rutas) -> dict:
+    """{equipo: motivos} de los que se rehacen desde cero (ver `rehacer`)."""
+    guardado = getattr(topo, "_desde_cero", None)
+    if guardado is None or guardado[0] is not rutas:
+        guardado = (rutas, rehacer.motivos(topo, rutas))
+        topo._desde_cero = guardado
+    return guardado[1]
+
+
+def _ordenes_completas(topo, disp) -> list:
+    """Todo lo de un equipo: también los puertos con IP que ya estaban bien
+    (enlaces, la puerta de enlace de una LAN), que no son órdenes de nadie."""
+    from .enlaces import _por_puerto
+    from .plan import Orden
+
+    ordenes = _ordenes(topo, disp)
+    enlaces = [o for o in ordenes if o.tipo == "enlace"]
+    nombradas = {l.split(None, 1)[1].lower() for o in enlaces for l in o.lineas
+                 if l.startswith("interface ")}
+    plan = getattr(topo, "plan", None)
+    # El puerto de las subinterfaces no lleva IP, salvo que alguien más esté en
+    # su red (la VLAN nativa, a propósito).
+    nombradas |= {s.puerto_lan.lower() for s in (plan.sitios if plan else [])
+                  if s.dueno is disp and s.puerto_lan
+                  and rehacer.ip_suelta(topo, disp, s.puerto_lan)}
+    for i in disp.interfaces:
+        nombre = i.nombre.lower()
+        if not i.configurada or i.planeada or "." in nombre or nombre in nombradas \
+                or nombre.startswith(("vlan", "port-channel")):
+            continue
+        enlaces.append(Orden("enlace", ["interface %s" % i.nombre]
+                             + ([" no switchport"] if disp.es_multicapa else [])
+                             + [" ip address %s %s" % (i.ip, i.mascara), " no shutdown"],
+                             True))
+    enlaces.sort(key=_por_puerto)
+    return [o for o in ordenes if o.tipo == "hostname"] + enlaces + \
+        [o for o in ordenes if o.tipo not in ("hostname", "enlace")]
+
+
 def _pendiente(topo, disp, rutas):
-    """(órdenes de LAN, rutas, ip routing) que le faltan al equipo."""
+    """(órdenes de LAN, rutas, ip routing) que le faltan al equipo. Al que se
+    rehace desde cero le falta todo."""
+    if disp.nombre in desde_cero(topo, rutas):
+        return _ordenes_completas(topo, disp), list(rutas.get(disp.nombre, [])), \
+            disp.es_multicapa
     ordenes = [o for o in _ordenes(topo, disp) if not o.presente]
     faltan = [r for r in rutas.get(disp.nombre, []) if not r.ya_configurada]
     return ordenes, faltan, disp.es_multicapa and disp.ruteo_ip is not True
@@ -158,13 +201,16 @@ def bloques_por_equipo(topo, rutas) -> list:
     return salida
 
 
-def _lineas_ios(disp, ordenes, rutas_sel, ip_routing) -> list:
+def _lineas_ios(disp, ordenes, rutas_sel, ip_routing, borrar=()) -> list:
     """Los renglones de IOS del equipo, en el orden en que se aplican. Siempre
     lleva su hostname: en el estilo de las prácticas no hay comentarios, y es lo
-    que dice de qué equipo es cada bloque."""
+    que dice de qué equipo es cada bloque. `borrar` va justo después: lo que se
+    quita a un equipo que se rehace desde cero."""
     lin = [l for o in ordenes if o.tipo == "hostname" for l in o.lineas]
     if not lin and (disp.hostname or "").lower() not in ("", "router", "switch"):
         lin.append("hostname %s" % disp.hostname)
+    if borrar:
+        lin += ["! se borra lo que tenía"] + list(borrar) + ["! y se pone todo de nuevo"]
     if ip_routing:
         lin.append("ip routing")
     lin += [l for o in ordenes if o.tipo != "hostname" for l in o.lineas]
@@ -178,15 +224,20 @@ def comandos_por_equipo(topo, rutas, completa=False) -> list:
     que les falta algo, y sólo lo que les falta; con `completa`, todo lo de
     cada equipo, esté puesto o no."""
     nombre = nombres_visibles(topo)
+    rehechos = desde_cero(topo, rutas)
     salida = []
     for disp in _equipos_con_salida(topo):
+        borrar = ()
         if completa:
-            ordenes, rutas_sel = _ordenes(topo, disp), rutas.get(disp.nombre, [])
+            ordenes, rutas_sel = _ordenes_completas(topo, disp), rutas.get(disp.nombre, [])
             ip_routing = disp.es_multicapa
         else:
             ordenes, rutas_sel, ip_routing = _pendiente(topo, disp, rutas)
+            if disp.nombre in rehechos and disp.cfg is not None:
+                borrar = rehacer.quitar(disp.cfg.lineas)[1]
         if ordenes or rutas_sel or ip_routing:
-            lineas = formato.estilo(_lineas_ios(disp, ordenes, rutas_sel, ip_routing))
+            lineas = formato.estilo(_lineas_ios(disp, ordenes, rutas_sel, ip_routing,
+                                                borrar))
             salida.append((nombre[disp.nombre], "\n".join(lineas)))
     return salida
 
@@ -288,6 +339,15 @@ def construir(nombre_archivo, formato, topo, subredes, rutas, inalcanzables,
 
     # ---- 1. Comandos por aplicar -------------------------------------------
     lin += _seccion(1, "COMANDOS POR APLICAR")
+    rehechos = desde_cero(topo, rutas)
+    if rehechos:
+        lin.append("Se rehacen desde cero, porque tienen errores que no se quitan agregando")
+        lin.append("comandos. Su bloque empieza borrando lo que tenían (los NO ...) y sigue")
+        lin.append("con su configuración completa:")
+        for equipo, motivos in rehechos.items():
+            for i, motivo in enumerate(motivos):
+                lin.append("  %-14s %s" % (nombre[equipo] if i == 0 else "", motivo))
+        lin.append("")
     if not equipos:
         lin.append("  (no se reconoció ningún ruteador)")
     else:

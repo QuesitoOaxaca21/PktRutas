@@ -32,7 +32,8 @@ muestra, pero no calcula rutas para ellas.
 
 No se comparan las rutas por igualdad exacta, sino **por cobertura**: una red
 destino ya está resuelta si alguna ruta que el equipo tiene contiene esa red,
-tomando siempre la más específica. Así una `ip route 0.0.0.0 0.0.0.0` o una
+tomando siempre la más específica, y el tráfico llega por ella (ver "Los
+equipos que se rehacen desde cero"). Así una `ip route 0.0.0.0 0.0.0.0` o una
 ruta sumarizada resuelven muchos destinos de golpe, y el reporte lo marca como
 `(por 0.0.0.0/0)` en vez de pedir una ruta por cada red.
 
@@ -115,6 +116,42 @@ El XML se edita por rangos de bytes (con `expat`) en vez de volver a
 serializarlo, porque ElementTree reescribe `<X></X>` como `<X />`: así el resto
 del archivo queda byte por byte igual. Antes de guardar se vuelve a leer la
 copia y se comprueba que ya no le falte nada.
+
+## Los equipos que se rehacen desde cero
+
+`pkt/rehacer.py` busca, equipo por equipo, errores que no se quitan agregando
+comandos. Cada orden del programa sólo agrega o reemplaza, y esos errores
+piden un `no`:
+
+* **Rutas.** Para cada red se sigue el camino del tráfico como quedaría
+  después de aplicar lo que falta, con la ruta más específica de cada equipo
+  y resolviendo los saltos que no son de un vecino como lo hace IOS (rutas
+  recursivas). Una ruta tuya está mal si por ella el tráfico no llega (da
+  vueltas o se pierde) **y** su salto ni siquiera acerca al destino: si acerca,
+  el culpable es un equipo de más adelante. Así una ruta que da la vuelta
+  larga en un anillo se respeta. Si la mala es una ruta más amplia (una por
+  omisión), basta con agregar la específica, que le gana; si es justo a esa
+  red, hay que quitarla.
+* **Pools** que cubren la red de una VLAN y no coinciden en red, máscara y
+  puerta de enlace con ninguna VLAN del equipo.
+* **EtherChannel** que no se forma: se ven los modos de las dos puntas (los
+  que tienen, o los que les va a poner el plan) y se forma con `on`/`on`,
+  LACP (`active` con `active` o `passive`) o PAgP (`desirable` con
+  `desirable` o `auto`). También puertos del mismo canal en grupos o modos
+  distintos, o canales en puertos que no van en EtherChannel.
+* **STP**: una prioridad de 4096 o menos fuera de la raíz de su red.
+* **Router-on-a-stick**: una IP en el puerto de las subinterfaces que no
+  comparte nadie (si alguien más está en su red, es la VLAN nativa a
+  propósito), una SVI con IP o una subinterfaz con la VLAN cambiada.
+
+A esos equipos `quitar()` les saca del running-config las rutas, los pools y
+sus `excluded-address`, las prioridades de STP, las subinterfaces, las SVI
+(menos la VLAN 1), los Port-channel, los `channel-group`, las IPs de los
+puertos y los `no switchport`, y da los `no ...` que hacen lo mismo en la CLI.
+Después va su configuración completa: el hostname, todos sus puertos con IP
+(también los que ya estaban bien), lo del plan y todas sus rutas. Lo demás del
+running-config no se toca. El `.pkt` configurado usa el running-config limpio
+como base, y al volver a leerlo se comprueba que ya no quede nada que rehacer.
 
 ## Switches multicapa (capa 3)
 
@@ -219,6 +256,7 @@ pkt/modelo.py          lectura del XML -> equipos, interfaces, cables, notas
 pkt/configuracion.py   lectura del running-config guardado en el .pkt
 pkt/nombres.py         hostnames a partir del nombre en el lienzo
 pkt/enlaces.py         los enlaces entre routers: de sus notas, o corregidos
+pkt/rehacer.py         qué equipos se rehacen desde cero y qué se les borra
 pkt/plan.py            plan de VLANs de las notas y la configuración de LAN
 pkt/vlsm.py            el prefijo que necesita una VLAN según sus equipos
 pkt/red.py             subredes, ruteo estático y comprobaciones del .pkt
@@ -240,6 +278,7 @@ python prueba_formato.py     # el estilo de los comandos (mayúsculas, ===)
 python prueba_plan.py        # notas de VLAN, EtherChannel, STP y router-on-a-stick
 python prueba_enlaces.py     # corrección de enlaces mal tecleados
 python prueba_completa.py    # práctica en blanco: todo sale de las notas
+python prueba_rehacer.py     # práctica a medias y mal hecha: se rehace lo que hace falta
 python prueba_escribir.py    # el .pkt configurado: running-config, VLANs y releerlo
 python prueba_instalador.py  # instala en una carpeta temporal y desinstala
 ```

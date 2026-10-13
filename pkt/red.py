@@ -53,6 +53,8 @@ class Ruta:
     ya_configurada: bool = False
     cubierta_por: str = ""      # prefijo de la ruta que ya la resuelve
     salto_configurado: str = ""
+    validos: tuple = ()         # saltos que también acercan al destino
+    mal_puesta: bool = False    # hay una ruta a esta misma red que no lleva hacia allá
 
     @property
     def marca(self) -> str:
@@ -82,6 +84,14 @@ def _cobertura(rutas_configuradas) -> list:
         except ValueError:
             continue
     return salida
+
+
+def _es_ip(texto) -> bool:
+    try:
+        ipaddress.IPv4Address(texto)
+        return True
+    except ValueError:
+        return False
 
 
 def _cubre(cobertura, destino):
@@ -243,11 +253,12 @@ def calcular_rutas(topo, subredes):
                 if sub not in inalcanzables:
                     inalcanzables.append(sub)
                 continue
-            mejor = None
+            mejor, validos = None, []
             for vecino, ip_vecino, ifaz in ady[router.nombre]:
                 cerca = dist.get(vecino)
                 if cerca is None or cerca >= propia:
                     continue      # ese vecino no acerca al destino
+                validos.append(ip_vecino)
                 clave = (cerca, ipaddress.IPv4Address(ip_vecino))
                 if mejor is None or clave < mejor[0]:
                     mejor = (clave, ip_vecino, ifaz)
@@ -255,24 +266,88 @@ def calcular_rutas(topo, subredes):
                 continue
             rutas[router.nombre].append(Ruta(
                 red=sub.red, mascara=sub.mascara, salto=mejor[1],
-                interfaz_salida=mejor[2], destino=duenos[0], saltos=propia))
+                interfaz_salida=mejor[2], destino=duenos[0], saltos=propia,
+                validos=tuple(validos)))
 
-    for router in topo.ruteadores:
-        lista = rutas[router.nombre]
+    for lista in rutas.values():
         lista.sort(key=lambda r: ipaddress.IPv4Address(r.red))
-        cobertura = _cobertura(router.rutas_estaticas)
-        for r in lista:
-            destino = ipaddress.IPv4Network("%s/%s" % (r.red, r.mascara),
-                                            strict=False)
-            cubre = _cubre(cobertura, destino)
-            if cubre:
-                r.ya_configurada = True
-                # Si la ruta puesta es exactamente el destino no hay nada que
-                # aclarar; solo interesa nombrarla cuando es mas amplia.
-                r.cubierta_por = "" if cubre[0] == destino else str(cubre[0])
-                r.salto_configurado = cubre[1]
-
+    _cotejar(topo, subredes, rutas, ady)
     return rutas, inalcanzables
+
+
+def _cotejar(topo, subredes, rutas, ady):
+    """Cada ruta calculada contra las que el equipo ya tiene.
+
+    Una ruta tuya resuelve el destino si es la mas especifica que lo contiene
+    y el trafico llega por ella, aunque sea por un camino mas largo (en un
+    anillo, dando la vuelta). Esta mal si el trafico no llega (da vueltas o se
+    pierde) y su salto ni siquiera acerca al destino: si el problema es mas
+    adelante, la culpa es de la ruta del equipo de mas adelante. Se mira como
+    quedaria la red despues de aplicar lo que falta."""
+    coberturas = {r.nombre: _cobertura(r.rutas_estaticas) for r in topo.ruteadores}
+    vecinos = {nombre: {ip: vecino for vecino, ip, _ in lista} for nombre, lista in ady.items()}
+    calculadas_de = {nombre: [(ipaddress.IPv4Network("%s/%s" % (r.red, r.mascara),
+                                                     strict=False), r.salto) for r in lista]
+                     for nombre, lista in rutas.items()}
+
+    def vecino_por(nombre, ip, vueltas=0):
+        """El vecino al que de verdad sale el trafico hacia `ip`. Si `ip` no es
+        de un vecino, IOS busca la ruta hacia ella (ruta recursiva)."""
+        vecino = vecinos.get(nombre, {}).get(ip)
+        if vecino is not None or vueltas > 4 or not _es_ip(ip):
+            return vecino
+        hacia = ipaddress.IPv4Network(ip)
+        cubre = _cubre(coberturas.get(nombre, []), hacia)
+        if cubre:
+            return vecino_por(nombre, cubre[1], vueltas + 1)
+        for red, salto in calculadas_de.get(nombre, []):
+            if hacia.subnet_of(red):
+                return vecino_por(nombre, salto, vueltas + 1)
+        return None
+
+    for sub in subredes:
+        duenos = {d.nombre for d, _ in sub.ruteadores()}
+        destino = ipaddress.IPv4Network("%s/%s" % (sub.red, sub.mascara), strict=False)
+        calculadas = {nombre: r for nombre, lista in rutas.items() for r in lista
+                      if (r.red, r.mascara) == (sub.red, sub.mascara)}
+        if not duenos or not calculadas:
+            continue
+
+        def salto(nombre):
+            cubre = _cubre(coberturas.get(nombre, []), destino)
+            if cubre:
+                return cubre[1]
+            r = calculadas.get(nombre)
+            return r.salto if r else None
+
+        def llega(nombre):
+            vistos = set()
+            while nombre not in duenos:
+                siguiente = salto(nombre)
+                if siguiente is None or nombre in vistos:
+                    return False                # sin ruta, o da vueltas
+                if not _es_ip(siguiente):
+                    return True                 # sale por interfaz: no se juzga
+                vistos.add(nombre)
+                nombre = vecino_por(nombre, siguiente)
+                if nombre is None:
+                    return False                # no hay por dónde llegar al salto
+            return True
+
+        for nombre, r in calculadas.items():
+            cubre = _cubre(coberturas[nombre], destino)
+            if not cubre:
+                continue
+            r.salto_configurado = cubre[1]
+            if _es_ip(cubre[1]) and cubre[1] not in r.validos and not llega(nombre):
+                # Si es justo a esta red hay que quitarla; si es una mas amplia
+                # (una por omision), basta con la especifica, que le gana.
+                r.mal_puesta = cubre[0] == destino
+                continue
+            r.ya_configurada = True
+            # Si la ruta puesta es exactamente el destino no hay nada que
+            # aclarar; solo interesa nombrarla cuando es mas amplia.
+            r.cubierta_por = "" if cubre[0] == destino else str(cubre[0])
 
 
 def verificar_ruteo(topo, subredes, rutas):

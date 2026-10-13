@@ -66,6 +66,7 @@ class Configuracion:
     pools: list = field(default_factory=list)
     vlans: list = field(default_factory=list)     # (numero, nombre)
     stp: dict = field(default_factory=dict)       # vlan -> prioridad
+    lineas: list = field(default_factory=list)    # los renglones tal cual
 
     def por_nombre(self, nombre):
         for i in self.interfaces:
@@ -94,7 +95,7 @@ def expandir_vlans(texto) -> list:
 
 def analizar(lineas) -> Configuracion:
     """`lineas` es la lista de renglones del running-config."""
-    cfg = Configuracion()
+    cfg = Configuracion(lineas=[(l or "").rstrip("\r\n") for l in lineas])
     interfaz = None
     pool = None
     vlan_actual = None

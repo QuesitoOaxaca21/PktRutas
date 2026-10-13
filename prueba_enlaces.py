@@ -155,17 +155,36 @@ def prueba_enlace_sin_ip():
     print("[ok] el cable sin IP recibe el /30 que sigue a tus enlaces")
 
 
+def _con_nota(texto):
+    """Agrega una nota de enlace junto al cable r1 - r2."""
+    def agregar(raiz):
+        nota = ET.SubElement(raiz.find("PHYSICALWORKSPACE/NOTES"), "NOTE")
+        for etiqueta, valor in (("X", "250"), ("Y", "85"), ("TEXT", texto)):
+            ET.SubElement(nota, etiqueta).text = valor
+    return agregar
+
+
 def prueba_sin_explicacion_unica():
-    """Dos lados igual de sospechosos: no se adivina, se dan las opciones."""
-    topo, _, hallazgos = _analizar({"Router1": _r2(
-        " ip address 10.0.0.9 255.255.255.252")}, conectada=False)
-    errores = _mensajes(hallazgos, "ERROR")
-    assert any("no hay cómo saber" in e and "10.0.0.2 en r2 FastEthernet0/0" in e
-               and "10.0.0.10 en r1 FastEthernet0/0" in e for e in errores), errores
-    assert sum("10.0.0.9" in e for e in errores) == 1, \
-        "un solo mensaje por el enlace: %s" % errores
-    assert topo.correcciones.total == 0
-    print("[ok] cuando no hay una sola explicación da las dos opciones sin tocar nada")
+    """Dos lados igual de sospechosos: decide la nota del cable; sin nota, se
+    queda el primero y se avisa que fue una elección."""
+    r2_mal = {"Router1": _r2(" ip address 10.0.0.9 255.255.255.252")}
+    topo, rutas, hallazgos = _analizar(r2_mal)
+    assert any("nada dice cuál de los dos está mal" in a and "se corrige a 10.0.0.2" in a
+               for a in _mensajes(hallazgos, "AVISO")), _mensajes(hallazgos)
+    assert _ruta(rutas, "Router0", "10.3.0.0").salto == "10.0.0.2"
+
+    # La nota del cable dice que el bueno es r2: el que se corrige es r1.
+    topo, rutas, hallazgos = _analizar(r2_mal, _con_nota(".8"))
+    assert any("su nota '.8' dice 10.0.0.8/30" in e and "se corrige a 10.0.0.10" in e
+               for e in _mensajes(hallazgos, "ERROR")), _mensajes(hallazgos)
+    assert _ruta(rutas, "Router1", "10.1.0.0").salto == "10.0.0.10"
+
+    # Ninguno está en la red de la nota: los dos se pasan a ella.
+    topo, rutas, hallazgos = _analizar(r2_mal, _con_nota(".12"))
+    assert any("no está en la red de su nota '.12'" in e for e in _mensajes(hallazgos)), \
+        _mensajes(hallazgos)
+    assert _ruta(rutas, "Router1", "10.1.0.0").salto == "10.0.0.13"
+    print("[ok] sin una sola explicación decide la nota del cable, o se queda el primero")
 
 
 def prueba_puerto_apagado():
