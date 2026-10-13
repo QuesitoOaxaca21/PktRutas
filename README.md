@@ -282,8 +282,10 @@ Es como el Bloc de notas de Windows 11, y sigue su tema claro u oscuro: la
 barra de menú (**Archivo, Editar, Ver, Ayuda**), la hoja con los comandos y la
 barra de estado con el mensaje, la línea y columna, el zoom, el fin de línea y
 la codificación. La hoja se puede editar, deshacer, acercar o alejar y ajustar
-al ancho de la ventana, como en el Bloc de notas. Ningún error cierra el
-programa: se avisa en la barra de estado, en rojo.
+al ancho de la ventana, como en el Bloc de notas. Se mueve con la rueda del
+mouse o el touchpad; las barras de desplazamiento son delgadas, como las de
+Windows 11: se asoman al mover el puntero y se esconden solas. Ningún error
+cierra el programa: se avisa en la barra de estado, en rojo.
 
 | Tecla | Acción |
 |---|---|

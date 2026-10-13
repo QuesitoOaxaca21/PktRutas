@@ -27,6 +27,7 @@ from pkt import red as analisis
 from pkt.descifrar import descifrar_archivo
 from pkt.modelo import leer_topologia
 from ui import tema
+from ui.barras import BarraFina
 from ui.menu import BarraMenu
 
 PAGINA = "https://github.com/QuesitoOaxaca21/PktRutas"
@@ -154,9 +155,11 @@ class Aplicacion:
             selectbackground=tema.SELECCION, selectforeground=tema.TEXTO,
             inactiveselectbackground=tema.SELECCION, font=(tema.LETRA_HOJA, LETRA),
             bd=0, highlightthickness=0, wrap="none", undo=True, padx=10, pady=8)
-        self.vertical = tk.Scrollbar(self.marco_hoja, command=self.texto.yview)
-        self.horizontal = tk.Scrollbar(self.marco_hoja, orient="horizontal",
-                                       command=self.texto.xview)
+        # Barras delgadas como las de Windows 11, no las blancas de Tk; la
+        # rueda y el touchpad mueven la hoja con o sin ellas.
+        self.vertical = BarraFina(self.marco_hoja, command=self.texto.yview)
+        self.horizontal = BarraFina(self.marco_hoja, orient="horizontal",
+                                    command=self.texto.xview)
         self.texto.configure(yscrollcommand=self.vertical.set,
                              xscrollcommand=self.horizontal.set)
         self.texto.grid(row=0, column=0, sticky="nsew")
@@ -167,6 +170,9 @@ class Aplicacion:
         self.texto.tag_configure("pista", foreground=tema.TENUE)
         for evento in ("<KeyRelease>", "<ButtonRelease-1>"):
             self.texto.bind(evento, lambda e: self._posicion(), add="+")
+        # Al mover el puntero sobre la hoja se asoman, como en Windows 11.
+        self.texto.bind("<Motion>", lambda e: (self.vertical.despertar(),
+                                               self.horizontal.despertar()), add="+")
         self.texto.focus_set()
 
     def _atajos(self):

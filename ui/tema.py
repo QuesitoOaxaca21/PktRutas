@@ -34,6 +34,7 @@ if CLARO:
     MENU = "#f9f9f9"            # el menú desplegado
     MENU_ACTIVO = "#e1e1e1"
     SELECCION = "#b5d5f5"
+    PILDORA, PILDORA_ENCIMA, PILDORA_ACTIVA = "#b9b9b9", "#8c8c8c", "#6c6c6c"
     OK, AVISO, ERROR = "#0f7b0f", "#8a5300", "#c42b1c"
 else:
     BARRA = "#2b2b2b"
@@ -45,6 +46,7 @@ else:
     MENU = "#2d2d2d"
     MENU_ACTIVO = "#4a4a4a"
     SELECCION = "#264f78"
+    PILDORA, PILDORA_ENCIMA, PILDORA_ACTIVA = "#5c5c5c", "#8a8a8a", "#ababab"
     OK, AVISO, ERROR = "#6bd66b", "#ffc861", "#ff6b6b"
 
 LETRA_HOJA = "Consolas"         # la del Bloc de notas

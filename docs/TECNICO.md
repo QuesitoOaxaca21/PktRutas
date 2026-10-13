@@ -211,6 +211,7 @@ docs/                  este documento y las capturas del README
 
 ui/tema.py             colores y letras; claro u oscuro, como Windows
 ui/menu.py             barra de menú al estilo del Bloc de notas
+ui/barras.py           barras de desplazamiento delgadas, como las de Windows 11
 
 pkt/twofish.py         cifrador Twofish en Python puro
 pkt/descifrar.py       formatos .pkt: ofuscación, Twofish-EAX, zlib

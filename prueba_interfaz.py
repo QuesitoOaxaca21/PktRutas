@@ -10,11 +10,19 @@ from __future__ import annotations
 
 import sys
 import tempfile
+import tkinter as tk
 from pathlib import Path
+from types import SimpleNamespace
 
 import app as programa
 from pkt.descifrar import cifrar_pkt
 from prueba_plan import NOTAS, construir
+
+
+def _todos(widget):
+    for hijo in widget.winfo_children():
+        yield hijo
+        yield from _todos(hijo)
 
 
 def main():
@@ -56,6 +64,31 @@ def main():
         aplicacion.copiar_siguiente()
         assert root.clipboard_get() == primero + "\n"
         print("[ok] Ctrl+Enter copia un equipo a la vez y lo deja seleccionado")
+
+        assert not [w for w in _todos(root) if isinstance(w, tk.Scrollbar)], \
+            "sin las barras blancas de Tk"
+        hoja, barra = aplicacion.texto, aplicacion.vertical
+        hoja.yview_moveto(0)
+        root.update()
+        assert barra.necesaria
+        barra.despertar()
+        assert len(barra.find_all()) == 1, "la píldora se ve al usarla"
+        barra._dormir()
+        assert not barra.find_all(), "y se esconde sola"
+        barra._presiona(SimpleNamespace(x=6, y=barra._pildora()[1] + 20))
+        root.update()
+        assert hoja.yview()[0] > 0, "un clic en el carril baja una página"
+        desde, hasta = barra._pildora()
+        barra._presiona(SimpleNamespace(x=6, y=(desde + hasta) / 2))
+        barra._arrastra(SimpleNamespace(x=6, y=barra.winfo_height() + 50))
+        barra._suelta(None)
+        root.update()
+        assert hoja.yview()[1] == 1.0, "arrastrar la píldora hasta abajo llega al final"
+        antes = hoja.yview()[0]
+        barra._rueda(SimpleNamespace(delta=120))
+        root.update()
+        assert hoja.yview()[0] < antes, "la rueda sobre la barra también mueve la hoja"
+        print("[ok] barras delgadas: se asoman al usarlas, se arrastran y la rueda mueve la hoja")
 
         try:
             comandos = Path(carpeta, "comandos.txt")
