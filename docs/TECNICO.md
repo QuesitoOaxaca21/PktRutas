@@ -54,6 +54,29 @@ en una red conectada del equipo y avanza al vecino, hasta llegar o quedarse
 sin ruta. De ahí salen los avisos de "hacia X no llega el tráfico desde Y",
 que es lo que explica un ping que sale pero no regresa.
 
+## El formato de los comandos
+
+Por dentro, cada orden se guarda con la forma completa de IOS (`interface
+FastEthernet0/0`, ` ip address ...`), que es también la que Packet Tracer
+guarda en el running-config: así se compara con lo que ya tiene cada equipo y
+se escribe el `.pkt` configurado. Sólo al mostrarlos (`pkt/formato.py`) se
+pasan al estilo de las prácticas:
+
+* en mayúsculas y abreviados: `EN`, `CONF T`, `INT FA0/0`, `INT ETH0/1/0`,
+  `INT GI0/1`, `INT VLAN 3`, `IP ADD`, `NO SHUT`; lo demás va completo
+  (`SWITCHPORT MODE TRUNK`, `ENCAPSULATION DOT1Q 3`);
+* los nombres tuyos, tal cual (`HOSTNAME sw10`, `NAME ventas`): en mayúsculas
+  renombrarían el equipo, y al volver a leer la práctica ya no coincidirían;
+* sin comentarios ni `END` / `WRITE MEMORY`, y cada bloque empieza con su
+  `HOSTNAME`, que es lo que dice de qué equipo es;
+* lo de alcance global junto, cada interfaz, VLAN o pool en su párrafo, y `===`
+  entre un equipo y otro. Los enlaces de cada equipo van en el orden en que
+  IOS lista los puertos (Fa0/0, Fa0/1, Eth0/1/0...).
+
+IOS no distingue mayúsculas en los comandos y acepta esas abreviaturas; al
+pegarlos, el running-config queda en su forma completa, la misma que el
+programa espera al volver a leer la práctica.
+
 ## De dónde saca la configuración
 
 Packet Tracer guarda varias cosas distintas dentro del `.pkt`, y el programa
@@ -186,11 +209,8 @@ LEEME.txt              primeros pasos para quien recibe el programa
 GUIA.html              guía de uso con capturas (Ayuda → Guía de uso)
 docs/                  este documento y las capturas del README
 
-ui/tema.py             paleta, widgets y navegación por teclado
+ui/tema.py             colores y letras; claro u oscuro, como Windows
 ui/menu.py             barra de menú al estilo del Bloc de notas
-ui/nucleo.py           estado compartido y clase base de las vistas
-ui/panel_archivo.py    F1, el archivo .pkt
-ui/panel_salida.py     F2, la salida
 
 pkt/twofish.py         cifrador Twofish en Python puro
 pkt/descifrar.py       formatos .pkt: ofuscación, Twofish-EAX, zlib
@@ -201,7 +221,8 @@ pkt/enlaces.py         los enlaces entre routers: de sus notas, o corregidos
 pkt/plan.py            plan de VLANs de las notas y la configuración de LAN
 pkt/vlsm.py            el prefijo que necesita una VLAN según sus equipos
 pkt/red.py             subredes, ruteo estático y comprobaciones del .pkt
-pkt/reporte.py         reporte de texto y bloques de comandos por equipo
+pkt/reporte.py         los comandos de cada equipo y el reporte de texto
+pkt/formato.py         el estilo de los comandos: EN, CONF T, INT FA0/0, ===
 pkt/escribir.py        la copia del .pkt con todo ya aplicado
 ```
 
@@ -213,7 +234,8 @@ No usa nada fuera de la biblioteca estándar de Python. Si está instalado
 ```bash
 python prueba_cripto.py      # Twofish y el descifrado del .pkt
 python prueba_topologia.py   # análisis completo de una red de ejemplo
-python prueba_interfaz.py    # arma la ventana y ejecuta las dos vistas
+python prueba_interfaz.py    # la ventana: abrir, copiar equipo por equipo, guardar
+python prueba_formato.py     # el estilo de los comandos (mayúsculas, ===)
 python prueba_plan.py        # notas de VLAN, EtherChannel, STP y router-on-a-stick
 python prueba_enlaces.py     # corrección de enlaces mal tecleados
 python prueba_completa.py    # práctica en blanco: todo sale de las notas

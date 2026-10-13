@@ -20,6 +20,7 @@ class Hallazgo:
     nivel: str
     equipo: str
     mensaje: str
+    resuelto: bool = False      # lo arreglan los comandos que genera el programa
 
 
 @dataclass
@@ -325,8 +326,8 @@ def revisar(topo, subredes, rutas) -> list:
     correcciones = getattr(topo, "correcciones", None)
     revisados = correcciones.revisados if correcciones is not None else set()
 
-    def anota(nivel, equipo, mensaje):
-        hallazgos.append(Hallazgo(nivel, equipo, mensaje))
+    def anota(nivel, equipo, mensaje, resuelto=False):
+        hallazgos.append(Hallazgo(nivel, equipo, mensaje, resuelto))
 
     # Mascaras invalidas y direcciones no asignables.
     for disp in topo.dispositivos:
@@ -544,7 +545,7 @@ def revisar(topo, subredes, rutas) -> list:
         elif faltan:
             anota(AVISO, router.nombre,
                   "le faltan %d ruta(s) estatica(s) de %d necesarias"
-                  % (len(faltan), len(necesarias)))
+                  % (len(faltan), len(necesarias)), resuelto=True)
         destinos = []
         for r in necesarias:
             try:
@@ -598,10 +599,13 @@ def revisar(topo, subredes, rutas) -> list:
                                                                         vis[donde])
             fallos.setdefault(motivo, []).append(router.nombre)
         for motivo, equipos in sorted(fallos.items()):
+            # Por falta de rutas lo arreglan las que genera el programa; un
+            # bucle o un salto inalcanzable, no.
             anota(AVISO, "red",
                   "hacia %s (%s) no llega el trafico desde %s: %s"
                   % (sub.etiqueta, ", ".join(sorted(vis[n] for n in duenos)),
-                     ", ".join(sorted(vis[n] for n in equipos)), motivo))
+                     ", ".join(sorted(vis[n] for n in equipos)), motivo),
+                  resuelto=motivo.startswith("sin ruta"))
 
     # Interfaces de VLAN en un router: sin un módulo de switch no se levantan,
     # y la subinterfaz que sí serviría se queda sin IP. Es el error de P2 (R2).

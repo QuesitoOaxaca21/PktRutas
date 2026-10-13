@@ -525,4 +525,14 @@ def corregir(topo) -> Correcciones:
         _sin_ip(topo, c, vis, vlans, cables[j], etiquetas.get(j), base, reservadas)
     _apagadas(topo, c)
     _revisar_notas(c, vis, cables, etiquetas, base)
+    for lista in c.ordenes.values():
+        lista.sort(key=_por_puerto)
     return c
+
+
+def _por_puerto(orden):
+    """Fa0/0, Fa0/1, Eth0/1/0, Eth0/3/0: el orden en que IOS lista los puertos."""
+    for linea in orden.lineas:
+        if linea.startswith("interface "):
+            return [int(n) for n in re.findall(r"\d+", linea)]
+    return []

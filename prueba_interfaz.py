@@ -1,6 +1,7 @@
-"""Prueba de la interfaz: arma la ventana, carga una práctica, recorre las dos
-vistas, copia equipo por equipo y guarda el .pkt configurado con el diálogo
-simulado.
+"""Prueba de la ventana: la arma, carga una práctica, revisa que la hoja tenga
+los comandos con el estilo de las prácticas, copia equipo por equipo, guarda
+los comandos y el .pkt configurado (con los diálogos simulados) y abre el
+reporte (sin abrir el Bloc de notas de verdad).
 
 No abre el bucle de eventos, así que la ventana sólo parpadea un instante.
 """
@@ -9,66 +10,89 @@ from __future__ import annotations
 
 import sys
 import tempfile
-import tkinter as tk
 from pathlib import Path
 
 import app as programa
 from pkt.descifrar import cifrar_pkt
 from prueba_plan import NOTAS, construir
-from ui import panel_archivo
 
 
 def main():
     root, _ = programa.crear_ventana()
-    root.geometry("1120x720+40+40")
+    root.geometry("960x640+40+40")
     aplicacion = programa.Aplicacion(root, None)
     root.update()
 
-    assert [p.tecla for p in aplicacion.paneles] == ["F1", "F2"], \
-        [p.tecla for p in aplicacion.paneles]
-    for i in range(len(aplicacion.paneles)):
-        aplicacion.mostrar(i)
-        root.update()
-    print("[ok] las dos vistas se dibujan: F1 archivo y F2 salida")
+    assert list(aplicacion.barra_menu.menus) == ["Archivo", "Editar", "Ver", "Ayuda"]
+    assert root.title() == "Sin título - PktRutas"
+    assert aplicacion.contenido() == "" and "Ctrl+O" in aplicacion.texto.get("1.0", "end")
+    print("[ok] como el Bloc de notas: menú, hoja y barra de estado, nada más")
 
-    f1, salida = aplicacion.paneles[0], aplicacion.salida
+    guardar = programa.filedialog.asksaveasfilename
+    abrir_en_bloc = programa.abrir_en_bloc
     with tempfile.TemporaryDirectory() as carpeta:
         practica = Path(carpeta, "practica.pkt")
         practica.write_bytes(cifrar_pkt(construir(NOTAS)))
-        assert f1.btn_guardar.cget("state") == tk.DISABLED, \
-            "sin archivo no se puede guardar el .pkt configurado"
-        f1.cargar(str(practica))
+        aplicacion.cargar(str(practica))
         root.update()
-        texto = salida.contenido()
-        assert "CONFIGURACIÓN - practica.pkt" in texto and "ip route" in texto, texto[:300]
-        assert aplicacion.activo == 1, "al analizar se pasa a la salida"
-        assert salida.bloques and f1.btn_guardar.cget("state") == tk.NORMAL
-        print("[ok] F1 analiza el .pkt y la salida queda en F2 con la lista de equipos")
-
-        primero = salida.bloques[0]
-        salida.copiar_siguiente()
-        assert root.clipboard_get() == primero[1]
-        assert salida.marcas[primero[0]].get(), "el equipo copiado queda marcado"
-        print("[ok] Copiar siguiente copia el primer equipo y lo marca")
-
-        destino = Path(carpeta, "practica_configurado.pkt")
-        original = panel_archivo.filedialog.asksaveasfilename
-        panel_archivo.filedialog.asksaveasfilename = lambda **kw: str(destino)
-        try:
-            f1.guardar_pkt()
-        finally:
-            panel_archivo.filedialog.asksaveasfilename = original
-        root.update()
-        assert destino.exists() and destino.stat().st_size > 0
-        assert aplicacion.lbl_estado.cget("text").startswith("Guardado"), \
+        texto = aplicacion.contenido()
+        assert root.title() == "practica.pkt - PktRutas"
+        assert texto.startswith("EN\nCONF T\nHOSTNAME "), texto[:80]
+        assert "\n===\nEN\nCONF T\nHOSTNAME " in texto, texto
+        assert not any(l.startswith("!") for l in texto.splitlines()), "sin comentarios"
+        assert "\nINT FA0/1\n" in texto and "\nNO SHUT\n" in texto and "\nIP ROUTE " in texto
+        assert "END" not in texto.split() and "equipo(s) por configurar" in \
             aplicacion.lbl_estado.cget("text")
-        print("[ok] Guardar .pkt configurado escribe la copia y lo dice en la barra")
+        print("[ok] al abrir el .pkt la hoja se llena con los comandos, con === entre equipos")
 
-    f1.ent_ruta.delete(0, tk.END)
-    f1.ent_ruta.insert(0, "no-existe.pkt")
-    f1.analizar()
+        primero, segundo = texto.split("\n===\n")[:2]
+        aplicacion.copiar_siguiente()
+        assert root.clipboard_get() == primero + "\n"
+        assert aplicacion.texto.get("sel.first", "sel.last") == primero
+        aplicacion.copiar_siguiente()
+        assert root.clipboard_get() == segundo + "\n"
+        assert aplicacion.lbl_estado.cget("text").startswith("Copiado ")
+        aplicacion.reiniciar()
+        aplicacion.copiar_siguiente()
+        assert root.clipboard_get() == primero + "\n"
+        print("[ok] Ctrl+Enter copia un equipo a la vez y lo deja seleccionado")
+
+        try:
+            comandos = Path(carpeta, "comandos.txt")
+            programa.filedialog.asksaveasfilename = lambda **kw: str(comandos)
+            aplicacion.guardar_comandos()
+            guardado = comandos.read_bytes()
+            assert b"\r\n" in guardado and b"\n" not in guardado.replace(b"\r\n", b""), \
+                "con fin de línea de Windows, como el Bloc de notas"
+            assert guardado.replace(b"\r\n", b"\n").decode() == texto.rstrip("\n") + "\n"
+
+            copia = Path(carpeta, "practica_configurado.pkt")
+            programa.filedialog.asksaveasfilename = lambda **kw: str(copia)
+            aplicacion.guardar_pkt()
+            root.update()
+            assert copia.exists() and copia.stat().st_size > 0
+            assert aplicacion.lbl_estado.cget("text").startswith("Guardado"), \
+                aplicacion.lbl_estado.cget("text")
+            print("[ok] guarda los comandos (.txt) y el .pkt configurado")
+
+            abiertos = []
+            programa.abrir_en_bloc = abiertos.append
+            aplicacion.ver_reporte()
+            reporte = Path(abiertos[0]).read_text(encoding="utf-8-sig")
+            assert "CONFIGURACIÓN - practica.pkt" in reporte and "1. COMANDOS POR APLICAR" in \
+                reporte and "6. COMPROBACIÓN" in reporte
+            print("[ok] el reporte completo se abre aparte, en el Bloc de notas")
+        finally:
+            programa.filedialog.asksaveasfilename = guardar
+            programa.abrir_en_bloc = abrir_en_bloc
+
+    aplicacion.acercar(1)
+    assert aplicacion.zoom == 110 and aplicacion.lbl_zoom.cget("text") == "110 %"
+    aplicacion.acercar(0)
+    assert aplicacion.zoom == 100 and aplicacion.lbl_zoom.cget("text") == "100 %"
+    aplicacion.cargar("no-existe.pkt")
     assert "No existe" in aplicacion.lbl_estado.cget("text")
-    print("[ok] los errores se avisan en la barra de estado, sin cerrar nada")
+    print("[ok] zoom como el del Bloc de notas, y los errores se avisan sin cerrar nada")
 
     root.destroy()
     return 0

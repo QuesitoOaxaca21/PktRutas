@@ -66,8 +66,8 @@ def _carpeta_conocida(guid) -> Path:
 def accesos_del_usuario() -> dict:
     """{dónde: carpeta}: menú Inicio, escritorio y Enviar a."""
     return {
-        "menú Inicio": _carpeta_conocida("{A77F5D77-2E2B-44C3-A6A2-ABA601054A51}"),
-        "escritorio": _carpeta_conocida("{B4BFCC3A-DB2C-424C-B029-7FE99A87C641}"),
+        "el menú Inicio": _carpeta_conocida("{A77F5D77-2E2B-44C3-A6A2-ABA601054A51}"),
+        "el escritorio": _carpeta_conocida("{B4BFCC3A-DB2C-424C-B029-7FE99A87C641}"),
         "Enviar a": _carpeta_conocida("{8983036C-27C0-404B-8F08-102D10DCFD74}"),
     }
 
@@ -226,7 +226,7 @@ def desinstalar(destino: Path, accesos: dict, clave=CLAVE) -> list:
         ruta = carpeta / (NOMBRE + ".lnk")
         if ruta.is_file() and str(destino / "app.py").lower() in leer_acceso(ruta)[1].lower():
             ruta.unlink()
-            quitado.append("el acceso directo del %s" % donde)
+            quitado.append("el acceso directo en %s" % donde)
     try:
         winreg.DeleteKey(winreg.HKEY_CURRENT_USER, clave)
         quitado.append("el registro en Configuración > Aplicaciones")
@@ -268,7 +268,7 @@ def main(argv=None) -> int:
         return 0
 
     if args.sin_escritorio:
-        del accesos["escritorio"]
+        del accesos["el escritorio"]
     print("Instalando PktRutas en %s ..." % destino)
     try:
         version = instalar(destino, accesos)

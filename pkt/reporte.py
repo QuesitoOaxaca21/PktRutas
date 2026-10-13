@@ -1,7 +1,9 @@
-"""Genera el reporte de texto que se abre en el Bloc de notas.
+"""Los comandos de cada equipo y el reporte de texto.
 
-Lo primero que aparece son los comandos, que es a lo que uno viene; el
-inventario, las subredes y las comprobaciones quedan después, como respaldo.
+Los comandos salen con el estilo de las prácticas (ver `formato`): en
+mayúsculas, sin comentarios y con '===' entre equipos. El reporte empieza por
+esos mismos comandos; el plan de VLANs, el inventario, las subredes y las
+comprobaciones quedan después, como respaldo.
 
 Los equipos se nombran con el hostname que tú configuraste, no con la etiqueta
 que Packet Tracer les pone en el lienzo (Router0, Multilayer Switch1, ...).
@@ -12,7 +14,9 @@ para poder distinguirlos.
 from __future__ import annotations
 
 import datetime
+import re
 
+from . import formato
 from .red import ERROR, AVISO, INFO, verificar_ruteo
 
 ANCHO = 78
@@ -38,10 +42,15 @@ def nombres_visibles(topo) -> dict:
     return topo.nombres_visibles()
 
 
+def _natural(texto):
+    """'R10' después de 'R2', como se lee."""
+    return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", texto)]
+
+
 def _orden_ruteador(disp):
     """Primero los ruteadores y al final los conmutadores de núcleo, que es el
     orden en que conviene aplicar la configuración."""
-    return (1 if disp.es_multicapa else 0, disp.hostname or disp.nombre)
+    return (1 if disp.es_multicapa else 0, _natural(disp.hostname or disp.nombre))
 
 
 def _equipos_con_salida(topo) -> list:
@@ -149,6 +158,44 @@ def bloques_por_equipo(topo, rutas) -> list:
     return salida
 
 
+def _lineas_ios(disp, ordenes, rutas_sel, ip_routing) -> list:
+    """Los renglones de IOS del equipo, en el orden en que se aplican. Siempre
+    lleva su hostname: en el estilo de las prácticas no hay comentarios, y es lo
+    que dice de qué equipo es cada bloque."""
+    lin = [l for o in ordenes if o.tipo == "hostname" for l in o.lineas]
+    if not lin and (disp.hostname or "").lower() not in ("", "router", "switch"):
+        lin.append("hostname %s" % disp.hostname)
+    if ip_routing:
+        lin.append("ip routing")
+    lin += [l for o in ordenes if o.tipo != "hostname" for l in o.lineas]
+    lin += ["ip route %s %s %s" % (r.red, r.mascara, r.salto) for r in rutas_sel]
+    return lin
+
+
+def comandos_por_equipo(topo, rutas, completa=False) -> list:
+    """[(nombre, bloque)] con el estilo de las prácticas, en el orden en que
+    conviene configurar los equipos. Sin `completa`, sólo los equipos a los
+    que les falta algo, y sólo lo que les falta; con `completa`, todo lo de
+    cada equipo, esté puesto o no."""
+    nombre = nombres_visibles(topo)
+    salida = []
+    for disp in _equipos_con_salida(topo):
+        if completa:
+            ordenes, rutas_sel = _ordenes(topo, disp), rutas.get(disp.nombre, [])
+            ip_routing = disp.es_multicapa
+        else:
+            ordenes, rutas_sel, ip_routing = _pendiente(topo, disp, rutas)
+        if ordenes or rutas_sel or ip_routing:
+            lineas = formato.estilo(_lineas_ios(disp, ordenes, rutas_sel, ip_routing))
+            salida.append((nombre[disp.nombre], "\n".join(lineas)))
+    return salida
+
+
+def texto_comandos(bloques) -> str:
+    """Los bloques de `comandos_por_equipo`, separados por '==='."""
+    return formato.unir([texto for _, texto in bloques])
+
+
 _COMO = {
     "nombre": "la nota lo nombra",
     "configuración": "sus redes ya estaban configuradas ahí",
@@ -244,60 +291,24 @@ def construir(nombre_archivo, formato, topo, subredes, rutas, inalcanzables,
     if not equipos:
         lin.append("  (no se reconoció ningún ruteador)")
     else:
-        for disp in equipos:
-            ordenes, faltan, ip_routing = _pendiente(topo, disp, rutas)
-            if ordenes or faltan or ip_routing:
-                lin += _bloque(disp, nombre[disp.nombre], ordenes, faltan,
-                               ip_routing)
-                continue
-            lin.append("!" + "-" * 40)
-            lin.append("! %s" % nombre[disp.nombre])
-            lin.append("!" + "-" * 40)
-            todas = rutas.get(disp.nombre, [])
-            # Sólo se nombra la ruta que cubre cuando es más amplia que el
-            # destino; si cada una está puesta tal cual, el detalle sobra.
-            amplias = sorted({r.cubierta_por for r in todas
-                              if r.marca.startswith(" (por")})
-            if not disp.es_ruteador:
-                lin.append("! ya tiene todo lo que pide el plan de VLANs")
-            elif not todas:
-                lin.append("! nada pendiente: ya tiene conectadas todas las redes")
-            elif amplias:
-                lin.append("! nada pendiente: sus %d destino(s) los cubre %s"
-                           % (len(todas), ", ".join(amplias)))
-            else:
-                lin.append("! nada pendiente: sus %d ruta(s) ya están puestas"
-                           % len(todas))
-            lin.append("")
-        lin.append("! Por aplicar: %s" % texto_pendientes(*pendientes(topo, rutas)))
+        por_aplicar = comandos_por_equipo(topo, rutas)
+        lin += texto_comandos(por_aplicar).splitlines()
+        con_comandos = {n for n, _ in por_aplicar}
+        completos = [nombre[d.nombre] for d in equipos if nombre[d.nombre] not in con_comandos]
+        lin.append("")
+        if completos:
+            lin.append("Ya completos, sin nada por aplicar: %s." % ", ".join(completos))
+        lin.append("Por aplicar: %s." % texto_pendientes(*pendientes(topo, rutas)))
 
     # ---- 2. Configuración completa -----------------------------------------
     lin += _seccion(2, "CONFIGURACIÓN COMPLETA")
     if not equipos:
         lin.append("  (no hay ruteadores)")
     else:
-        lin.append("  Todo lo de cada equipo, esté puesto o no, para aplicarlo")
-        lin.append("  desde cero o cotejarlo con lo que ya tienes.")
+        lin.append("Todo lo de cada equipo, esté puesto o no, para aplicarlo desde cero")
+        lin.append("o cotejarlo con lo que ya tienes.")
         lin.append("")
-        for disp in equipos:
-            todas = rutas.get(disp.nombre, [])
-            ordenes = _ordenes(topo, disp)
-            if not todas and not ordenes and not disp.es_multicapa:
-                lin += ["!" + "-" * 40, "! %s" % nombre[disp.nombre],
-                        "!" + "-" * 40,
-                        "! todas sus redes están conectadas directamente", ""]
-                continue
-            puestas = [r for r in todas if r.ya_configurada] + \
-                      [o for o in ordenes if o.presente]
-            extra = None
-            if puestas:
-                amplias = sorted({r.cubierta_por for r in todas if r.ya_configurada
-                                  and r.marca.startswith(" (por")})
-                extra = "%d de %d ya puestos%s" % (
-                    len(puestas), len(todas) + len(ordenes),
-                    "; %s cubre sus rutas" % ", ".join(amplias) if amplias else "")
-            lin += _bloque(disp, nombre[disp.nombre], ordenes, todas,
-                           disp.es_multicapa, extra)
+        lin += texto_comandos(comandos_por_equipo(topo, rutas, completa=True)).splitlines()
 
     # ---- 3. Plan de VLANs --------------------------------------------------
     lin += _seccion_plan(topo, nombre)
@@ -401,8 +412,9 @@ def construir(nombre_archivo, formato, topo, subredes, rutas, inalcanzables,
                       len([h for h in hallazgos if h.nivel == INFO])))
         lin.append("")
         for h in hallazgos:
-            lin.append("  [%-5s] %-14s %s"
-                       % (h.nivel, nombre.get(h.equipo, h.equipo), h.mensaje))
+            lin.append("  [%-5s] %-14s %s%s"
+                       % (h.nivel, nombre.get(h.equipo, h.equipo), h.mensaje,
+                          " (lo arreglan los comandos por aplicar)" if h.resuelto else ""))
 
     if inalcanzables:
         lin.append("")

@@ -24,8 +24,11 @@ Cómo instalarlo
 2. Doble clic en Instalar.bat. Queda en el menú Inicio, en el escritorio y
    en "Enviar a" (clic derecho sobre un .pkt, Enviar a, PktRutas). Se instala
    sólo para tu usuario, sin permisos de administrador.
-3. En la ventana, F1 carga el .pkt y F2 muestra los comandos, equipo por
-   equipo. La guía de uso está en el menú Ayuda (es GUIA.html).
+3. En la ventana, Archivo > Abrir .pkt (Ctrl+O) llena la hoja con los
+   comandos de cada equipo, separados por ===. Ctrl+Enter copia el
+   siguiente equipo para pegarlo en su CLI, y Archivo > Guardar .pkt
+   configurado escribe una copia con todo ya aplicado. La guía de uso
+   está en el menú Ayuda (es GUIA.html).
 
 Para actualizarlo, corre el Instalar.bat de la versión nueva. Para quitarlo:
 Configuración, Aplicaciones, PktRutas, Desinstalar.

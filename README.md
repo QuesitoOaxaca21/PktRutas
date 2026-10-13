@@ -6,17 +6,19 @@ subinterfaces, DHCP, troncales, EtherChannel y la raíz de STP. Si la práctica
 está en blanco, la configura completa con lo que pones en el lienzo: el nombre
 de cada equipo, las notas de los enlaces y las notas con las redes y VLANs.
 
-Puedes pegar los comandos equipo por equipo o guardar una copia del `.pkt` con
-todo ya aplicado, lista para abrir en Packet Tracer (8.2 a 9.x).
+La ventana es como el Bloc de notas: abres la práctica y la hoja se llena con
+los comandos de cada equipo, listos para pegar en su CLI. También guarda una
+copia del `.pkt` con todo ya aplicado, para abrirla en Packet Tracer (8.2 a
+9.x).
 
-![PktRutas con una práctica en blanco cargada](docs/f1.png)
+![PktRutas con una práctica en blanco cargada](docs/ventana.png)
 
 ## Instalación
 
 Necesitas Windows y [Python 3.10 o más nuevo](https://www.python.org/downloads/),
 instalado con las opciones que trae marcadas (incluyen tkinter, la ventana).
 
-1. Descarga `PktRutas-1.0.0.zip` de
+1. Descarga el `PktRutas-x.y.z.zip` de la versión más nueva, en
    [Releases](https://github.com/QuesitoOaxaca21/PktRutas/releases/latest).
 2. Clic derecho sobre el zip → **Extraer todo**.
 3. En la carpeta que sale, doble clic en **`Instalar.bat`**.
@@ -60,32 +62,53 @@ Si prefieres no instalarlo, dentro de la carpeta descomprimida da doble clic en
 Lo que ya hayas configurado a mano se respeta y sólo se genera lo que falta:
 si los hostnames y los enlaces ya están puestos, los pasos 1 y 2 sobran.
 
-### 2. Ábrela en PktRutas (F1)
+### 2. Ábrela en PktRutas
 
-**Abrir archivo .pkt** (`Ctrl+O`). El resumen dice cuántos hostnames, puertos
-de enlace, rutas y grupos de comandos de LAN le faltan a la práctica, y si
-encontró errores.
-
-Con las notas del paso 1, los enlaces de R1 quedan en `16.0.0.4`, `16.0.0.8`...
-y las VLANs se acomodan alrededor, de la más grande a la más chica:
+**Archivo → Abrir .pkt** (`Ctrl+O`). La hoja se llena con los comandos de cada
+equipo, en el orden en que conviene configurarlos (routers, cores y switches),
+con el estilo de las prácticas: en mayúsculas, sin comentarios y con `===`
+entre un equipo y otro.
 
 ```
-VLAN 2   DOS        16.0.128.0 - 16.0.255.255 - 255.255.128.0   gw 16.0.255.254
-VLAN 3   TRES       16.0.1.0 - 16.0.1.255 - 255.255.255.0   gw 16.0.1.254
-VLAN 4   CUATRO     16.0.0.128 - 16.0.0.255 - 255.255.255.128   gw 16.0.0.254
+EN
+CONF T
+HOSTNAME R2
+
+INT FA0/0
+IP ADD 12.0.0.6 255.255.255.252
+NO SHUT
+
+INT FA0/1
+IP ADD 12.0.0.9 255.255.255.252
+NO SHUT
+===
+EN
+CONF T
+HOSTNAME R3
+...
 ```
 
-### 3. Copia los comandos (F2) o guarda el .pkt configurado
+Los nombres que tú pusiste (el hostname, el de una VLAN) se respetan tal cual:
+`HOSTNAME sw10` y no `SW10`, para no renombrar el equipo. Si ya configuraste
+algo, en la hoja sólo sale lo que falta; si no falta nada, sale la
+configuración completa de cada equipo.
 
-En **F2** está la lista de equipos, en el orden en que conviene configurarlos.
-**Copiar siguiente** (`Ctrl+Enter`) copia el bloque del siguiente equipo y lo
-marca; lo pegas en su CLI y ya trae `enable`, `configure terminal`, `end` y
-`write memory`. Debajo está el reporte completo.
+La barra de abajo dice cuántos equipos hay por configurar y si hay errores o
+avisos; el detalle está en **Ver → Reporte completo** (`Ctrl+R`), que se abre
+en el Bloc de notas con el plan de VLANs, la revisión y el detalle del ruteo.
 
-![La salida: la lista de equipos y el reporte](docs/f2.png)
+### 3. Copia los comandos o guarda el .pkt configurado
 
-O, en F1, **Guardar .pkt configurado** (`Ctrl+Shift+S`): escribe una copia de la
-práctica con todo ya aplicado, como si hubieras pegado los comandos. El
+`Ctrl+Enter` (**Editar → Copiar siguiente equipo**) copia el bloque del
+siguiente equipo, lo deja seleccionado en la hoja y la barra dice de quién es
+y cuántos faltan; lo pegas en su CLI. Como en el Bloc de notas, también puedes
+seleccionar a mano, cambiar algo antes de copiar o guardar todo como `.txt`
+(`Ctrl+S`).
+
+![Un equipo recién copiado con Ctrl+Enter](docs/copiado.png)
+
+O **Archivo → Guardar .pkt configurado** (`Ctrl+Mayús+S`): escribe una copia de
+la práctica con todo ya aplicado, como si hubieras pegado los comandos. El
 original no se toca.
 
 La guía completa, con capturas y qué hacer si algo no sale, viene en
@@ -255,31 +278,23 @@ Packet Tracer, guárdalos antes.
 
 ## La ventana
 
-Está hecha a imagen del Bloc de notas de Windows, con dos vistas:
-
-| Tecla | Vista | Qué hace |
-|---|---|---|
-| **F1** | Archivo `.pkt` | Abre y analiza el archivo y resume lo que falta. Aquí está **Guardar .pkt configurado**. |
-| **F2** | Salida | Los comandos, equipo por equipo, y debajo el reporte completo: copiar, guardar o abrir en el Bloc de notas. |
-
-En F2, la **casilla** de cada equipo marca los que ya copiaste (**Reiniciar
-marcas** las limpia), pulsar el **nombre** copia ese equipo en concreto, y
-`(ya completo)` significa que no le falta nada: si lo copias, sale su
-configuración entera, por si lo quieres rehacer desde cero.
-
-Se puede encoger hasta el tamaño de un Bloc de notas; por debajo de 880×540
-esconde los textos de ayuda. Ningún error cierra el programa: se avisa en la
-barra de estado, en rojo.
+Es como el Bloc de notas de Windows 11, y sigue su tema claro u oscuro: la
+barra de menú (**Archivo, Editar, Ver, Ayuda**), la hoja con los comandos y la
+barra de estado con el mensaje, la línea y columna, el zoom, el fin de línea y
+la codificación. La hoja se puede editar, deshacer, acercar o alejar y ajustar
+al ancho de la ventana, como en el Bloc de notas. Ningún error cierra el
+programa: se avisa en la barra de estado, en rojo.
 
 | Tecla | Acción |
 |---|---|
-| `F1` / `F2` | Archivo / salida |
-| `Ctrl+O` | Abrir un `.pkt` |
-| `Ctrl+Enter` | En F1, volver a analizar; en F2, copiar el siguiente equipo |
-| `Ctrl+Shift+S` | Guardar `.pkt` configurado |
-| `Ctrl+Shift+C` | Copiar toda la salida |
-| `Ctrl+S` / `Ctrl+B` | Guardar la salida / abrirla en el Bloc de notas |
-| `Ctrl+L` | Limpiar la salida |
+| `Ctrl+O` | Abrir una práctica (`.pkt`) |
+| `F5` | Volver a cargarla, después de guardar cambios en Packet Tracer |
+| `Ctrl+Enter` | Copiar el siguiente equipo |
+| `Ctrl+S` | Guardar los comandos como `.txt` |
+| `Ctrl+Mayús+S` | Guardar el `.pkt` configurado |
+| `Ctrl+R` | Ver el reporte completo, en el Bloc de notas |
+| `Ctrl+Mayús+C` | Copiar todos los comandos |
+| `Ctrl+Más` / `Ctrl+Menos` / `Ctrl+0` | Acercar / alejar / restaurar el zoom |
 | `Ctrl+Q` | Salir |
 
 ## Más detalles
