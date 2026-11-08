@@ -139,7 +139,7 @@ piden un `no`:
   LACP (`active` con `active` o `passive`) o PAgP (`desirable` con
   `desirable` o `auto`). También puertos del mismo canal en grupos o modos
   distintos, o canales en puertos que no van en EtherChannel.
-* **STP**: una prioridad de 4096 o menos fuera de la raíz de su red.
+* **STP**: una prioridad de 4096 o menos en la VLAN 1, fuera de la raíz de su red.
 * **Router-on-a-stick**: una IP en el puerto de las subinterfaces que no
   comparte nadie (si alguien más está en su red, es la VLAN nativa a
   propósito), una SVI con IP o una subinterfaz con la VLAN cambiada.
@@ -232,6 +232,268 @@ python analizar.py practica.pkt -o salida.txt       # con otro nombre
 python analizar.py practica.pkt --pkt copia.pkt     # además, el .pkt configurado
 python analizar.py practica.pkt --xml               # guarda también el XML interno
 ```
+
+## El módulo de Packet Tracer
+
+`modulo/` es la misma lógica en JavaScript, porque un Script Module no corre
+Python. Tiene su propio juego de notas: además de lo de `pkt/`, revisa los combos,
+genera IPv6 y aplica en vivo.
+
+**Por qué lee el archivo entero.** La API tiene `getCanvasNoteIds` y
+`getCanvasNoteText`, pero una nota pegada con Ctrl+V conserva el uuid de la
+original y la API sólo alcanza a la primera: con dos notas iguales, el texto de la
+segunda no se puede leer. `fileSaveToBytes` sí da todo, al momento y sin guardar,
+así que el módulo descifra esos bytes (Twofish-EAX, como `pkt/descifrar.py`) y lee
+el mismo XML. Tarda unos 250 ms y las pruebas leen los `.pkt` igual que Packet
+Tracer. Para corregir una nota con el uuid repetido, el pánico quita las notas que
+lo comparten y las vuelve a poner, ya con uuid propio y en su mismo lugar.
+
+**En qué orden salen las redes.** Varios sitios comparten la base, así que el orden
+decide cada número. A mano se hace una tabla por VLAN y se tachan los bloques que
+chocan con lo ya repartido, por eso una red de otra VLAN recorre todas las siguientes.
+No hay una sola regla: en `P4_P3` van de la más chica a la más grande y por número de
+router, con el multicapa en el lugar del router del que cuelga; `P3_P2`, resuelta a mano,
+va de la más grande a la más chica, routers primero; lo que guardó el programa antes va
+sitio por sitio. `_REPARTOS` lista esos órdenes y `_elegirReparto` (`_elegir_reparto` en
+Python) los calcula todos y se queda con el que más coincide con los combos y con lo ya
+configurado. Sin nada escrito gana el primero, el de `P4_P3`. Con usuarios en vez de
+diagonales, gana el VLSM clásico. El reparto no pisa nada porque cada bloque se compara
+contra lo ocupado; lo que puede encimarse son los combos escritos, y `_revisarEncimadas4`
+dice con qué. Python no revisa combos: los toma como la red de esa VLAN, tal cual.
+
+**Combos desplazados.** Una red escrita es correcta si cuadra con su diagonal, no se encima y
+no se aleja más de un bloque, de su propio tamaño, de lo que le toca por la cuenta (lo pidió el
+usuario el 5-nov-2026). `_respetarEscritas` deja esas donde las escribieron y reparte lo demás
+alrededor. Las que no cuadran se corrigen ahí donde iban contando; las que se fueron lejos, desde
+lo que les tocaba. Las dos, antes de repartir las que no traen dirección. Una que va fuera de
+orden, como una olvidada, puede medirse además contra `_trasLaAnterior`, el primer bloque después
+de la red que tiene abajo: ahí empieza a contar quien olvidó un combo. La cuenta decide también
+quién gana si dos escritas se enciman, que es la que coincide.
+Para esa elección, quien olvida un combo y lo agrega contando desde el último no debe recorrer
+a nadie: por su orden iría antes y las de después dejarían de coincidir. `_fueraDeOrden` lo
+detecta con la secuencia creciente más larga: de la más chica a la más grande cada red queda
+arriba de las anteriores (el primer bloque libre de un tamaño nunca queda abajo de uno más chico
+ya puesto), y por eso sólo se intenta en ese orden. Lo que no entra en la secuencia se aparta
+si así coinciden más combos. Lo apartado no suma en `puntos`: si no, cualquier orden ganaría
+declarando todo 'fuera de orden'. Las VLANs con diagonal y sin combo se apartan juntas y van
+después de la última red, sólo si eso hace coincidir más combos. En Python un combo escrito ya
+se toma tal cual; lo único distinto es esa VLAN sin combo, que ahí toma el primer bloque libre.
+
+**Lo que aprendimos de Packet Tracer 9.0.1:**
+
+* El motor es QJSEngine: `let`, flechas, clases, `Map`, `Set` y arreglos tipados,
+  pero no BigInt, por eso IPv6 son 8 grupos de 16 bits.
+* Los scripts se cargan en orden alfabético, no en el de la lista: ningún archivo
+  puede depender de otro al cargarse.
+* `$se` tarda unos milisegundos en existir después de cargar la página, y `setHtml`
+  no lo trae: la barra tiene que ser una interfaz `this-sm:`.
+* `$se` pierde en silencio la llamada entera si un argumento trae un salto de línea o
+  un retorno, sin error en ningún lado. Comillas, diagonales y acentos sí pasan. Por
+  eso la página sólo manda órdenes y números: el texto de los comandos no sale del módulo.
+* A cada vista le agrega una hoja de estilos que pinta `html` y `body` con
+  `!important`, a partir de `--pt-bg-color` y `--pt-text-color`, siempre blanco y
+  negro. Todo lo que herede de `body` sale negro: los colores se le dan redefiniendo
+  esas variables, también con `!important`.
+* Las vistas llevan zoom según la escala de la pantalla (`getZoomFactor`: 1.3 al
+  125 %), pero `createWebView` y `setGeometry` reciben píxeles reales. La barra pide su
+  tamaño en píxeles de la página y el módulo lo multiplica por el zoom. El `screenX` del
+  ratón sí va en píxeles reales, los mismos de `setGeometry`.
+* Una vista suelta no tiene dueño en Windows: al hacer clic en Packet Tracer se le queda
+  detrás, y con `WindowStaysOnTopHint` se quedaría encima de todas las aplicaciones.
+  `attachToMainViewArea` la mete en el área del lienzo, sin ventana ni barra de título; hay
+  que llamar a `show` después o no se dibuja. Ahí `setGeometry` usa coordenadas del lienzo y
+  la vista se encima sin mover nada, así que puede crecer mientras haya un menú abierto.
+  `dockToMainViewArea` en cambio le quita al lienzo una columna o una fila entera, y le
+  pone su propio título.
+* Adjuntar la primera vista hace que Packet Tracer vuelva a crear su ventana principal:
+  cambia de HWND, sigue maximizada y en su lugar. Es un parpadeo, una vez por sesión.
+* Al abrir un archivo o con File > New, el lienzo nuevo queda encima de la vista adjunta:
+  hay que volver a llamar a `raise`. Logical/Physical y Realtime/Simulation no la tapan.
+* Un clic en el lienzo le quita el foco a la vista, y la página recibe `blur`: con eso se
+  cierran sus menús.
+* Justo al abrir una práctica guardada sin configurar, el archivo aún no trae la
+  running-config de sus equipos; a los pocos segundos ya traen la de fábrica. Para que los
+  comandos salgan iguales desde la primera lectura, un router o switch sin configuración
+  se trata como uno de fábrica.
+* Cada apertura crea objetos nuevos: `getActiveFile().getObjectUuid()` cambia aunque se
+  reabra el mismo archivo, cuando `getSavedFilename` sigue igual. La barra mira ese
+  uuid cada medio segundo mientras está abierta. No usa el aviso `fileOpened`: en una
+  prueba el módulo pareció releer sin que se abriera nada, y aunque no se pudo
+  reproducir, así no depende de él. `fileSaveToBytes` no dispara ningún aviso.
+* `changeNoteText` guarda el texto, pero la nota deja de dibujarse hasta reabrir el
+  archivo. El pánico quita la nota y la vuelve a poner en su lugar, con `addNote` y
+  `setCanvasItemRealPos`, y así se sigue viendo.
+* Los temporizadores siguen vivos al abrir otro archivo, y `getDevice` busca por nombre:
+  un reintento pendiente tocaría a los equipos de la otra práctica que se llamen igual.
+  Por eso cada uno guarda el uuid con el que empezó y se detiene si ya cambió.
+* `enterCommand` es síncrono. Un error se ve en la salida (`outputWritten`), en una
+  línea que empieza con `% `; los avisos de log no llevan el espacio.
+* Un equipo recién puesto en el lienzo arranca en el diálogo inicial
+  (`Would you like to enter...`) y uno ya configurado en modo `logout`.
+* Un 3560 rechaza `ipv6 unicast-routing` hasta que `sdm prefer
+  dual-ipv4-and-ipv6 default` y un reinicio lo activan. Un 3650 no necesita nada.
+  El módulo lo detecta por el rechazo, guarda, reinicia y termina al volver.
+* Un 2960 no acepta IPv6. Un multicapa sin IP, sin `ip routing` y sin nota que lo
+  nombre se trata como switch de capa 2.
+* El `.pts` va cifrado y sólo Packet Tracer lo escribe, con el botón Export de su
+  editor. Sin firma también lo acepta, y sólo lo busca en donde se agregó con Add.
+* El editor no acepta el ID de un módulo ya agregado: lo avisa al cambiar de pestaña.
+  Por eso `armar_pts.ps1` lo quita primero, sólo en su sesión; se cierra a la fuerza
+  y el módulo sigue agregado en los demás Packet Tracer.
+
+**Para volver a armar el `.pts`** después de cambiar algo:
+
+```powershell
+modulo\pruebas\armar_pts.ps1
+```
+
+Abre un Packet Tracer aparte en un escritorio oculto de Windows (`pruebas/oculto.ps1`),
+llena el editor con UI Automation y lo cierra: no se ve, no quita el foco y no toca los
+que ya estén abiertos. Con `-Visible` se abre en pantalla, para ver qué falla. Luego
+hay que quitar y volver a agregar el módulo, o reiniciar Packet Tracer si es el mismo
+archivo.
+
+En ese escritorio Packet Tracer corre completo y `PrintWindow` lo captura, con diálogos
+de archivos y todo. Tres cosas no se aíslan: el portapapeles es de toda la sesión, el
+Bloc de notas y el navegador pueden abrirse en la pantalla de verdad, y el puntero sólo
+se puede simular con el botón abajo: Qt descarta los movimientos sin botón, y con él sí
+llegan, lo que basta para probar un arrastre. Una prueba que corra ahí no debe copiar ni
+abrir archivos o enlaces; lo del puntero lo cubre `prueba_ventana.js`.
+
+**Prácticas a medias.** Las notas mandan, y lo que falta no es lo mismo que lo que está mal.
+Cada orden del plan se marca `presente` (ya está) y `mal` (lo que el puerto trae la contradice);
+`motivosRehacer` junta las `mal` con lo que se ve de conjunto: rutas, pools, canales, STP, enlaces
+fuera de su nota (`correcciones.mal`) e interfaces encima de lo planeado. Un equipo con motivos se
+borra entero; los demás sólo reciben sus órdenes no presentes.
+
+`analizarXml` lee por vueltas: `_analizar(xml, quitar)` deja a los equipos de `quitar` en el modelo
+como quedarán al borrarlos (`_limpiarEquipo`), así lo que tenían ya no aparta redes, no se rutea y
+no le da pistas a nadie, y eso puede dejar a la vista lo que otro tiene mal. Termina cuando nadie
+nuevo se suma. Del equipo borrado se recuerda `redesDeAntes`, porque de ahí sale de quién es una nota
+sin nombre, y la IP de sus puertos con cable: un enlace sin nota sigue siendo del usuario.
+
+Lo que aparta una red para la cuenta es sólo lo que no contradice a las notas: un enlace
+(`_esEnlaceConfigurado`) sí; cualquier otra cosa encima de un combo, no, y ese equipo se borra. Una
+interfaz que es justo lo que dicen las notas no se marca aunque otra nota se le encime (`P9_5T` trae
+una VLAN y un enlace encimados): eso no se arregla borrando. Una PC se reparte si su puerto está en
+una VLAN que ninguna nota dice; si otra nota la dice, se respeta: `P4_P3` tiene la V6 en R1 y R7,
+que llega a SWR1 por otro cable, con lo inalámbrico.
+
+**Los modos de Aplicar.** `analizarXml(xml, { modo })` recibe `activo`, `estricto`, `medio` o `bajo`
+(`MODOS`, en `comandos.js`; cualquier otro es activo). En uno pasivo, `_pasivo` mide en la primera
+vuelta, sin nadie borrado, qué router o core cumple: `_empezado` (alguna IP, pool o ruta en su
+running-config; el hostname no cuenta), `_faltasEnlaces` (nada en `correcciones.mal` y ninguna orden
+de `correcciones.ordenes` con `ip address`: lo que aplicar pondría en sus /30; un `no shutdown` solo no
+cuenta) y `_faltasDhcp` (un pool idéntico en red, máscara y puerta por cada VLAN de su sitio, también las
+de combo mal; sin `no service dhcp` ni `excluded-address` que deje sin direcciones a sus PCs). Los
+switches de `s.switches` siguen a su dueño. Con eso, `puede(n)` filtra todo: sólo lo que cumple entra a
+`quitar`, a la regla de "más de la mitad" y a `Borrar todo`; los bloques, los completos, las PCs del DHCP
+y lo inalámbrico (`_inalambricoQueCumple`, por el `sitio` de la controladora, el server y los AP, y el
+`dueno` de los teléfonos) se quedan sólo con lo suyo. Los `motivos` de lo que no cumple no se
+reportan: no se rehace. El que cumple se trata igual que en activo, y si trae otra cosa mal se borra
+entero y vuelve con su DHCP y sus /30 tal cual (el pool puede cambiar de nombre).
+
+`_aplicarTodo` guarda quién cumplía al empezar y lo pasa a cada relectura (`{ cumplian }`): a media
+aplicación un equipo puede no traer ya lo que el modo pide. Lo encontró la escena en Packet Tracer: en
+bajo, SWR2 (un 3560 con su /30 malo) se borró, se reinició para IPv6 con sólo lo borrado guardado, y al
+volver ya no contaba como empezado; sin `cumplian` se quedaba así, sin configurar.
+
+`ctx.pasivo` guarda `cumplen`, `noCumplen` y `faltas` (`[equipo, qué]`); `textoProblemas` las pone
+arriba de todo y `hayProblemas` las cuenta. `principal.js` guarda el modo en `pktrutas_modo.txt`, en
+`getUserFolder()` (si no, en la carpeta temporal), lo lee en `main()`, lo manda a la página con
+`modo(...)` y en `mostrar`, y `uiModo` lo cambia y vuelve a leer sin abrir el Bloc de notas.
+
+Trampas de Packet Tracer 9.0.1, medidas en un equipo real:
+
+* `no interface Port-channelN` deja sus puertos con `shutdown`, salvo que antes se les quite
+  `channel-group`. Por eso las interfaces creadas se borran al último.
+* El `Port-channel` a veces no muestra `switchport mode trunk` aunque el canal esté bien: se depende
+  de lo que digan sus puertos.
+* `no switchport mode` no hace nada con `switchport nonegotiate` puesto: va al último del puerto.
+* `Device.restoreToDefault(a, b)` devuelve `true` y no cambia la configuración.
+* `default interface` existe, pero no quita `shutdown` y deja `switchport mode trunk`.
+* Las PCs no tienen `getDefaultGateway`: la puerta que les dio el DHCP sale en `<GATEWAY>`.
+* Un 3560 no deja poner una troncal sin `switchport trunk encapsulation dot1q`, aunque sólo haga de
+  switch, y lo dice con `Command rejected`, sin `%`. Un 3650 rechaza esa misma línea con `%`.
+
+**Lo inalámbrico.** La controladora no tiene API ni consola: `getCommandLine()` existe, pero no
+responde. Su configuración es texto en el `.pkt`: `MANAGEMENT_INTERFACE`, `WLC_INTERFACES` y
+`CAPWAP_AC` (`WLANS`, `AP_GROUPS`, `APS`, `RADIUS_SERVERS`, `LOCAL_USERS`), con claves sin cifrar.
+`IN_SETUP_MODE` en `false` hace que el portal ya no pida el asistente. Por eso `principal.js` hace
+`fileSaveToBytes`, parcha el XML (`parchearInalambrico`), lo cifra (`cifrarPkt`, sin comprimir) y
+`fileOpenFromBytes(bytes, ruta)`. Abrir así no pide confirmación, tarda alrededor de un segundo,
+conserva el nombre del archivo y cambia el `uuid` de la práctica, así que `_LEIDO` se actualiza para
+que el vigía no la tome por otra. Se aprovecha para escribir igual el `ACS_SERVER` del server, el
+`CAPWAP` de los AP y el `WIRELESS_CLIENT` de los teléfonos. Con el AP en `P3_P3`, desde que se abre:
+el AP tiene IP a los 33 s y los teléfonos a los 54 s.
+
+Comparar sin reabrir: `leerInalambrico` lee lo que cada equipo tiene y `_firmaWlc` y `_firmaServidor`
+lo comparan con el plan. Una interfaz dinámica nueva necesita MAC propia: `_macDe` la deriva de su
+nombre. En las PCs y en cada troncal, la nativa sale de `s.nativa`, que en el sitio del multicapa
+es la del router del segundo cable (`s.routerNativa`). `_reservarTroncales` evita que ese cable reciba
+un /30 como cualquier enlace sin nota.
+
+El server en el core: `_apartarServidor`, antes de repartir las PCs, saca de `s.pcs` al server de un
+sitio con controladora y lo deja en `s.servidor`; si no, le tocaría VLAN y DHCP como a una PC.
+`_puertaDelServidor` decide dónde va su puerta: en un multicapa, su mismo puerto (`no switchport`); en un
+sitio con router, `s.vlanServidor`, que `_vlansDelSitio` agrega a las demás (por eso llega a la base de
+VLANs y a la revisión de troncales, y no cuenta como sobrante), con subinterfaz en el router; sin
+`s.servidor`, el puerto del router, como antes. Un server en un switch de abajo de un multicapa no entra:
+ahí no se puede poner `no switchport`, y se avisa. `_planServidor` sólo respeta la IP del puerto si es de
+`192.168.x` (cualquier otra se cambia), y si esa puerta es la `.1`, el server toma la `.2`. Al mover el cable hay dos sobras: `srv.viejos`, el
+puerto sin cable con IP en esa red, y `srv.rutasDeSobra`, la ruta que la puerta traía hacia la red que
+ahora tiene conectada. `aplicarAlModelo` las quita también del modelo: si no, `construirSubredes` ve dos
+dueños de la misma red y al router que se quedó sin el server no le calcula su ruta. Sin el server, el
+router de la nativa se queda sin LAN para `_conLan`, pero `_bajarAlMulticapa` no le quita su nota mientras
+el multicapa tenga la suya.
+
+Un 3650 de capa 2 y un WLC o AP cuentan en `_grafoL2` como vecinos sin IP. Un `Port` de un teléfono es
+`Wireless0`. `Device.getType()`: controladora 41, LAP 44, teléfono 20, server 9, multicapa 16.
+
+Un AP recién puesto en el lienzo trae su puerto de cable en `UP_METHOD 0` y sin DHCP: no pide IP y no llega a
+la controladora, sin ningún aviso. `_parchearAp` lo deja en `1` con DHCP; los de `P3_P3` y `P4_P3` ya venían
+así porque se hizo a mano en su pestaña Config, y sólo se notó con los de `O5_P3`.
+
+Un AP con el puerto del radio (`eAccessPointWirelessN`) en `UP_METHOD 5` y DHCP encendido anuncia su red,
+pero nadie se le puede asociar y el teléfono no reintenta. `P4_P3` traía uno así: fallaba o no según a
+qué AP se fuera cada teléfono, y parecía intermitente. `_parchearAp` lo deja en `0` y sin DHCP. Para ver
+por qué un teléfono no conecta: `WirelessClientProcess.getCurrentNetworkAt(i)` dice qué ve en el aire y
+`getCurrentApMac()` a quién se asoció. Los AP tienen su BSSID en la MAC del radio, no en la de su puerto.
+
+**Archivos:**
+
+```
+modulo/bytes.js        de los bytes del .pkt al XML y de regreso: Twofish-EAX, inflate, UTF-8
+modulo/ipv.js          direcciones IPv4 e IPv6, y orden como las tuplas de Python
+modulo/modelo.js       XML -> equipos, cables, notas y running-config
+modulo/plan.js         notas, de quién es cada una, reparto de redes y órdenes
+modulo/enlaces.js      los enlaces: /30 de su nota o corregidos, y su /127
+modulo/rutas.js        ruteo estático en IPv4 e IPv6
+modulo/combos.js       tus combos contra el programa, y qué corrige el pánico
+modulo/inalambrico.js  controladora, AP, server RADIUS y teléfonos: qué les toca y cómo se escribe
+modulo/comandos.js     estilo de los comandos, equipos que se rehacen, lo pendiente
+modulo/principal.js    lo único que habla con Packet Tracer: barra, Bloc de notas y aplicar
+modulo/ventana.htm     la barra del módulo
+modulo/PktRutas.pts    todo lo anterior, ya armado
+```
+
+**Pruebas:**
+
+```bash
+node modulo/pruebas/prueba_nucleo.js    # combos, pánico, IPv6 y qué abre, copia y dice el módulo
+node modulo/pruebas/prueba_ventana.js   # la barra, con ratón y teclado de verdad
+```
+
+`prueba_ventana.js` corre la página real en Edge o Chrome sin ventana y simula lo que
+Packet Tracer le hace: su hoja de estilos y el `$se` que llega tarde y pierde los saltos
+de línea. No abre nada en pantalla ni toca el portapapeles. `prueba_nucleo.js` corre
+`principal.js` en Node con un Packet Tracer de mentira: anota lo que abriría en el Bloc de
+notas y lo que copiaría, sin hacerlo.
+
+`modulo/comparar.js` compara los comandos con los de la versión en Python, práctica
+por práctica; en 51 de las 57 de la prueba salen idénticos, y en las otras 6 la
+diferencia es lo nuevo (combos, IPv6, el multicapa de capa 2 y el reparto de PCs).
+`modulo/pruebas/PruebaPT.js` corre pasos dentro de Packet Tracer sin clics.
 
 ## Estructura
 

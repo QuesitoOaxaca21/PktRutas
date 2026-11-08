@@ -11,7 +11,233 @@ los comandos de cada equipo, listos para pegar en su CLI. También guarda una
 copia del `.pkt` con todo ya aplicado, para abrirla en Packet Tracer (8.2 a
 9.x).
 
+También viene como módulo dentro del propio Packet Tracer, que además revisa tus
+cálculos antes de aplicarlos.
+
 ![PktRutas con una práctica en blanco cargada](docs/ventana.png)
+
+## Dentro de Packet Tracer
+
+`modulo/PktRutas.pts` es el programa como módulo de Packet Tracer 9: corre dentro
+de Packet Tracer, sin Python y sin guardar el archivo. Lee la práctica que tienes
+abierta, revisa tus cálculos y aplica los comandos directo en cada equipo.
+
+![La barra del módulo dentro del lienzo, recién abierta en una práctica sin notas](docs/modulo.png)
+
+Es una barra chica dentro del lienzo, en blanco como los menús de Packet Tracer:
+**Archivo, Editar, Ver**, y a la derecha el modo (**Activo**), **Aplicar** y **Pánico**. No tiene
+ventana propia: se va con Packet Tracer y no tapa otras aplicaciones. Se mueve
+arrastrándola del asa de la izquierda. La flechita de junto la colapsa hasta dejar
+sólo el asa; con un clic en el asa se vuelve a abrir.
+
+Los comandos y los errores se abren en el Bloc de notas. Pasa solo al abrir una
+práctica, si hay algo que mostrar; si cambias las notas, **Archivo > Volver a cargar**
+(F5). Lo demás sale un momento en un renglón debajo de la barra: cuántos equipos
+faltan, cuántos copiaste, cuántas PCs ya tienen IP.
+
+| Atajo, con la barra en foco | Qué hace |
+| --- | --- |
+| `F5` | Volver a leer la práctica y abrir lo que haya |
+| `Ctrl+R` | Los problemas, en el Bloc de notas |
+| `Ctrl+Mayús+C` | Copiar todos los equipos |
+| `Ctrl+S` | Guardar los comandos en un archivo |
+| `Ctrl+Mayús+S` | Aplicar a los equipos |
+| `Ctrl+Q` | Cerrar la barra; se vuelve a abrir en **Extensions → PktRutas** |
+
+**Para instalarlo**, una vez en cada computadora:
+
+1. En Packet Tracer: **Extensions → Scripting → Configure PT Script Modules...**
+2. **Add** y elige `PktRutas.pts`. Déjalo en una carpeta fija: Packet Tracer
+   guarda esa ruta.
+3. Selecciónalo en la lista, **Start** y **Ok**.
+
+De ahí en adelante arranca con Packet Tracer y se abre en **Extensions →
+PktRutas**.
+
+**Las notas.** Cada router lleva una nota con su nombre, sus VLANs con su diagonal
+y, debajo de cada una, tus combos: en IPv4 la red, la última utilizable (la puerta
+de enlace) y la máscara; en IPv6 la red y la última, con su diagonal.
+
+```
+R1
+
+VLAN 2/22
+    11.0.4.0 - 11.0.7.254 - 255.255.252.0
+    ABCD:AB:AC:AD::4A0/126 - ABCD:AB:AC:AD::4A3/126
+
+VLAN 3/28
+    11.0.0.16 - 11.0.0.30 - 255.255.255.240
+    ABCD:AB:AC:AD::16A0/125 - ABCD:AB:AC:AD::16A7/125
+```
+
+En IPv6 basta con la red y su diagonal, pero si escribes también la última, el
+programa la revisa. Los enlaces van como siempre, con su nota junto al cable
+(`.4`). Su IPv6 sale sola, el primer /127 libre de esa misma red: `::` para R1 y
+`::1` para R2; para pedir otra, escríbela en la nota: `.4 ABCD:AB:AC:AD::8/127`.
+
+**Qué revisa.** De cada combo se revisa que cuadre con su diagonal (que el bloque empiece
+donde debe, y el rango y la máscara), que no se encime con otra red o con un enlace, y que
+no se aleje más de un bloque de donde le toca por la cuenta.
+
+* **Si pasa:** se aplica todo, tal como lo escribiste. Desplazado un solo bloque no es un
+  error y las demás redes no se recorren; al pie de los problemas se dice qué le tocaba:
+
+  ```
+  r4 vlan 5 (16.8.0.0/15) va desplazada, le tocaba 16.6.0.0: se dejó donde la escribiste
+  ```
+
+* **Si no:** en IPv4 se reserva el DHCP de esa red; en IPv6, su dirección y sus
+  rutas. Lo demás sí se aplica, con los valores correctos. Se abre el Bloc de notas
+  con el problema, y si tu red cae encima de otra o de un enlace, dice de cuál:
+
+  ```
+  r1 vlan 3: saltos erróneos, es 11.0.0.16 - 11.0.0.30, con máscara 255.255.255.240
+  r4 vlan 3: se encima con r2 vlan 3 (16.0.8.0/22), es 16.0.16.0 - 16.0.19.254, con máscara 255.255.252.0
+  ```
+
+Si la diagonal del título no cuadra con tu rango y tu máscara, y esos dos sí cuadran
+entre sí (`VLAN 5/16` con `16.4.0.0 - 16.5.255.254 - 255.254.0.0`), se usa la de tu
+rango y el Bloc de notas lo dice. Si tampoco cuadran entre sí, manda el título.
+
+**La cuenta.** Lo que le toca a cada red, y las que no traen combo, sale como en una hoja:
+una tabla por VLAN, de la red más chica a la más grande (primero los enlaces), tachando
+los bloques que chocan con lo ya repartido. En cada tabla van por número de router, y el
+multicapa ocupa el lugar del router del que cuelga: SWR1 (de R1), R2, R3, R4, SWR3 (de
+R5)... Si tus combos o lo ya configurado siguen otro orden, usa el que más coincida y lo
+dice.
+
+**Si olvidaste un combo,** no renumeres: agrégalo contando desde tu último combo. Si tu
+última red termina en `16.11.255.255`, una `VLAN 6/28` va en `16.12.0.0 - 16.12.0.14`.
+Ahí el margen de un bloque se cuenta desde la red que tiene abajo. Una VLAN con diagonal y
+sin combo también va después del último, si tus combos no le dejaron lugar en su tabla.
+
+Una nota puede ir a nombre del router aunque la LAN cuelgue del multicapa pegado a él:
+`R3` se aplica a `SWR2` si R3 no tiene LAN propia y SWR2 no tiene su nota.
+
+Corrige la nota, **Archivo > Volver a cargar** (F5) y **Aplicar**: entra lo que faltaba.
+
+**Si la práctica quedó a medias o mal hecha,** las notas siempre mandan:
+
+* **Lo que falta se agrega.** Un equipo sin tocar o cortado a la mitad sólo recibe lo que le
+  falta, y lo demás que tenga se queda.
+* **El equipo que traiga algo que contradiga a las notas se borra y se vuelve a configurar.**
+  Su bloque empieza con los `NO ...` y sigue completo; el Bloc de notas dice qué tenía mal.
+  Cuenta como mal: una IP, máscara o IPv6 que no es la de la nota (también en un enlace que
+  funciona: se pasa al /30 de su nota), una interfaz encima de la red de una VLAN o de un enlace,
+  una subinterfaz, SVI o puerto apagados, un puerto con otra VLAN o en otro modo, una troncal que
+  no deja pasar una VLAN de su red, un EtherChannel sin troncal, con modos que no se entienden o
+  a medias, una ruta por donde el tráfico no llega, un pool que no es el de su VLAN, un
+  `excluded-address` que deja sin direcciones a las PCs, `no service dhcp` y la prioridad de STP
+  fuera de la raíz.
+* **Con más de la mitad de los equipos mal se borran todos.** Para forzarlo aunque nada se vea
+  mal: **Archivo > Borrar todo y aplicar**, eligiéndolo dos veces.
+
+Al borrar se va todo lo de red: IPs, rutas, pools, VLANs que su red no lleva, OSPF y demás, ACL y
+NAT. Se quedan las contraseñas, el banner y las consolas, porque las notas no dicen nada de eso. Un
+equipo sin errores no se toca, así que lo que le hayas tecleado de más (una VLAN nativa, por
+ejemplo) sigue ahí.
+
+Al terminar, las PCs del equipo al que se le puso su pool piden DHCP otra vez, y también cualquiera
+que siga con una IP o una puerta que no son las de su VLAN. Si alguna no queda bien, el Bloc de
+notas dice cuál.
+
+Lo que no se puede saber: si intercambias los hostnames de dos routers, la nota le toca al que trae
+ese nombre; y si una PC no dice su VLAN en el nombre, se le cree al puerto mientras esa VLAN
+aparezca en alguna nota.
+
+**Los modos de Aplicar.** El botón junto a **Aplicar** dice el modo y, con un clic, deja elegir
+otro. **Activo** es lo de siempre: completa todo el ejercicio. Los **pasivos** sólo tocan lo que tú
+ya empezaste: cada router o core tiene que traer lo que pide el modo, y entonces se configura
+completo, igual que en activo, junto con los switches que cuelgan de él. Al que no cumple no se le
+toca nada: ni se borra, ni se le agrega, ni a sus PCs se les pide DHCP.
+
+| Modo | Qué tiene que traer cada router o core |
+| --- | --- |
+| Activo | Nada: se hace todo |
+| Pasivo estricto | Su DHCP y sus enlaces /30, completos y bien |
+| Pasivo medio | Sus enlaces /30, completos y bien (el DHCP lo pone Aplicar) |
+| Pasivo bajo | Algo de red puesto por ti: una IP, un pool o una ruta |
+
+"Bien" es lo que dicen las notas: un pool por cada VLAN, con su red, su máscara y su puerta, y cada
+enlace en el /30 de su nota. Un enlace apagado sí cuenta (Aplicar lo enciende); el hostname solo no
+cuenta como empezar, porque puede venir puesto. En un modo pasivo el botón se pinta de amarillo, el
+aviso dice cuántos no cumplen, y el Bloc de notas de problemas empieza con qué le falta a cada uno.
+Lo inalámbrico va con el sitio de su controladora. El modo se queda guardado: sigue igual al volver
+a abrir Packet Tracer.
+
+**Lo inalámbrico.** Si hay una controladora (WLC-3504) cableada, además de las notas de siempre
+van dos más. Una lista con el nombre de cada VLAN, sin nombre de equipo; la que se llama `NATIVA` es
+la red de la controladora y los AP:
+
+```
+VLAN 2/17
+ALUMNOS
+
+VLAN 3/22
+DOCENTES
+
+VLAN 6/28
+NATIVA
+```
+
+Y las redes que da cada AP, con el nombre que tiene en el lienzo. Un AP sin nota da todas las de su
+sitio, y el Bloc de notas lo dice. `ALUMNO` en esta nota y `ALUMNOS` en la lista de nombres cuentan como
+la misma red, y también se dice:
+
+```
+AP1
+ALUMNOS
+DOCENTES
+```
+
+La nativa puede ir en el mismo router que las demás VLANs (como `P3_P3`), en un router con su
+propia nota y un segundo cable al multicapa (como `P4_P3`; ese segundo cable no lleva IP: es una
+troncal) o en la nota del propio multicapa (como `O5_P3`). La controladora y el server van cableados
+directo al switch core. Con eso, **Aplicar** pone:
+
+* **La puerta de la nativa y su pool (`VLANNATIVA`):** en un router, la subinterfaz
+  `encapsulation dot1Q n native`; en un multicapa, su `interface Vlan n`.
+* **La puerta del server:** su red es siempre una `192.168.x.0/24` propia: la `.254` es de la puerta y la
+  `.1` del server. Si ya trae una red `192.168.x`, se respeta; cualquier otra se cambia. Dónde queda la
+  puerta depende de su cable:
+  * En un core multicapa, en ese mismo puerto: `no switchport` y su IP. Las rutas salen solas.
+  * En un core que sólo hace de switch (el 3650 de `P3_P3`), que no puede llevar IP en un puerto: una
+    VLAN propia (`192 SERVIDOR`, o la siguiente libre), su puerto de acceso y una subinterfaz en el
+    router, sin pool. Va al pie de los problemas como supuesto.
+  * Si sigue cableado al router, en el puerto del router.
+
+  Si mueves el cable después de aplicar, lo que quedó en el lugar de antes se quita: la IP del puerto
+  sin cable y la ruta que ya sobra.
+* **Switches:** toda troncal de ese sitio lleva `switchport trunk native vlan n`, también las de los
+  AP, la de la controladora y el segundo cable. La PC pegada al switch de la controladora y más
+  cercana a ella queda en la nativa: es la que entra al portal.
+* **Server:** IP fija, AAA encendido y RADIUS en el puerto 1812, con su cliente en la IP de la
+  controladora. Nombre del cliente, secreto, usuario y contraseña son `majli`.
+* **Controladora:** nombre `WLC` y portal con `admin` / `Abc1234`. Su IP es la penúltima de la nativa
+  (una antes de la puerta). Lleva una interfaz por VLAN, también en su penúltima, y una red
+  WPA2-Enterprise AES por VLAN, contra el server. La red `WLC` que pide el asistente del portal queda
+  creada, sin darla a los AP.
+* **AP:** su puerto de cable pide IP por DHCP, que de fábrica no lo hace, y dan las redes de su nota.
+* **Teléfonos:** cada uno con la red de su AP más cercano, turnándose para que cada red tenga alguno,
+  con `majli` / `majli`. Si su nombre dice una red, ésa.
+
+La controladora no tiene consola, así que eso no sale como comandos: va al pie de los comandos en el
+Bloc de notas, por si quieres verlo, pero no se copia. Para ponerlo, el módulo lo escribe en la
+práctica y la vuelve a abrir desde memoria: los equipos reinician con su configuración, y los
+teléfonos tardan cerca de un minuto en conectarse. El archivo no se toca hasta que guardes.
+
+**Pánico.** El botón se habilita cuando más de la mitad de los combos están mal.
+Corrige en las notas sólo los errores pequeños, los que se justifican con el mismo
+combo (la red bien con la última o la máscara mal, o un salto de diferencia),
+empezando por los más chicos, hasta llegar al 70% de combos bien, y aplica. Con 8
+combos eso es 6 (75%). Los errores grandes no los toca, y el Bloc de notas dice qué
+corrigió y qué falta.
+
+Si una PC no dice su VLAN en el nombre (`PC1 V3`), en el switch ni por su IP, se
+reparten por orden de puerto, en partes iguales y las primeras VLANs con las que
+sobren: con 3 PCs y 2 VLANs, Fa0/2 y Fa0/3 van en la VLAN 2 y Fa0/4 en la VLAN 3.
+Contando todos los switches de ese router, cada VLAN de su nota se queda con al
+menos una PC; si no alcanzan, el Bloc de notas dice cuál se quedó sin ninguna.
 
 ## Instalación
 
@@ -147,6 +373,8 @@ Cada cable entre routers y cores toma su /30 de la nota que tenga más cerca
   tiene VLANs, escribe completa al menos una nota.
 * Un cable sin nota toma el primer /30 libre desde la .4, y el reporte lo
   avisa por si tu práctica pide otro.
+* Si dos notas caen en el mismo /30, se queda con él la que dice su inicio (`.44`
+  le gana a `.47`) y la otra toma el primero libre; el aviso dice quién lo usa.
 * Entre dos cores el cable se configura sólo si tiene su nota: sin ella
   puede ser una troncal a propósito.
 * Los enlaces se resuelven antes que las VLANs, así que las redes de las
@@ -163,7 +391,7 @@ Cuatro formas, y se pueden mezclar:
 * **La red base y la diagonal de cada VLAN** (VLSM), como en el ejemplo de
   arriba. Sin diagonal en la base, se reparte desde esa dirección dentro de
   la red de su clase (16.0.0.0 → /8). Si varias redes traen la misma base,
-  quedan una tras otra: primero los routers (R1, R2...) y luego los cores.
+  se reparten una tabla por VLAN, de la más chica a la más grande.
 * **Sólo la red base** (`R1 16.1.0.0/16`): se reparte en partes iguales entre
   las VLANs de las PCs de esa red (2 VLANs, mitades; 3 o 4, cuartos). Si
   algo de la práctica ya ocupa parte de la base, las partes se achican hasta
@@ -180,12 +408,16 @@ Cuatro formas, y se pueden mezclar:
   VLAN 5 CINCO 12.0.0.128/25
   ```
 
-Con tamaños (diagonal o usuarios) va de la VLAN más grande a la más chica y
-cada una toma el primer bloque libre desde la base, saltándose lo que ya usa
-la práctica (los enlaces, otras VLANs); el orden en que las escribas no
-importa. Si la lista de la nota trae VLANs, esa lista manda sobre las PCs. El
-pool de DHCP de cada VLAN sale de la misma cuenta que su SVI o subinterfaz,
-así que su `default-router` siempre es la IP de esa interfaz.
+Cada VLAN toma el primer bloque libre desde la base, saltándose lo que ya usa
+la práctica (los enlaces, otras VLANs); el orden en que las escribas no importa.
+Con diagonales se hace una tabla por VLAN, de la más chica a la más grande, y en
+cada tabla por número de router, con el multicapa en el lugar del router del que
+cuelga. Si la práctica ya trae redes configuradas en otro orden, se respeta el que
+más les coincida, para no moverlas. Con usuarios en vez de diagonales es el VLSM de
+siempre: sitio por sitio, de la VLAN más grande a la más chica. Si la lista de la nota
+trae VLANs, esa lista manda sobre las PCs. El pool de DHCP de cada VLAN sale de la
+misma cuenta que su SVI o subinterfaz, así que su `default-router` siempre es la IP
+de esa interfaz.
 
 Al escribir una red:
 
@@ -229,9 +461,9 @@ usa el reporte lo avisa para que agregues el nombre.
 Dos reglas salen de cómo se resuelven estas prácticas a mano:
 
 * **Raíz de STP**: el switch pegado al core o al router, sólo si el sitio
-  tiene switches colgados de otros. Se pone la prioridad 4096 para la VLAN 1
-  **y** para las del sitio: con PVST cada VLAN elige su raíz aparte, y si sólo
-  se ajusta la 1, en las demás la decide la MAC más baja.
+  tiene switches colgados de otros. Se pone la prioridad 4096 sólo para la
+  VLAN 1, como en las prácticas: con PVST cada VLAN elige su raíz aparte, así
+  que en las demás la decide la MAC más baja.
 * **EtherChannel**: dos o más cables entre los mismos dos switches. `active`
   el más cercano al core, `passive` el otro.
 

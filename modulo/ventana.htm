@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>PktRutas</title>
+<style>
+/* Sólo la barra de herramientas, dentro del lienzo y con los colores de los menús de Packet
+   Tracer. Los comandos y los errores se abren en el Bloc de notas: de eso se encarga principal.js. */
+:root {
+    color-scheme: light;
+    --barra: #ffffff; --menu: #f9f9f9; --texto: #000000; --tenue: #8a8a8a;
+    --borde: #c4c4c4; --separador: #d7d7d7; --resalte: #95cdfb; --panico: #c42b1c;
+    --pasivo: #fff1c2; --pasivo-borde: #d9a521;
+    /* Packet Tracer agrega a cada vista una hoja que pinta html y body con !important,
+       a partir de estas variables: aquí se le dan los de la barra. */
+    --pt-bg-color: var(--barra) !important; --pt-text-color: var(--texto) !important;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; }
+body { background: var(--barra); color: var(--texto); font: 11.5px "Segoe UI", system-ui, sans-serif; user-select: none; }
+
+nav { display: flex; align-items: center; height: 24px; background: var(--barra); border: 1px solid var(--borde); }
+/* Los puntos van en el contenido; el relleno también agarra, sin verse. */
+#asa { align-self: stretch; width: 12px; padding: 3px 1px 3px 3px; cursor: move; background: radial-gradient(circle, var(--tenue) 1px, transparent 1.2px) 0 0 / 3px 4px content-box; }
+.titulo, .accion { height: 22px; padding: 0 6px; font: inherit; line-height: 22px; color: var(--texto); background: none; border: 0; cursor: default; }
+.titulo:hover, .titulo.abierto, .accion:hover:not(:disabled) { background: var(--resalte); }
+.titulo:focus-visible, .accion:focus-visible { outline: 1px solid var(--tenue); outline-offset: -1px; }
+.accion:disabled { color: var(--tenue); }
+#modo { margin-left: auto; }
+#modo::after { content: "\25BE"; margin-left: 4px; color: var(--tenue); }
+/* En un modo pasivo, Aplicar no hace todo: que se note. */
+#modo.pasivo { background: var(--pasivo); box-shadow: inset 0 0 0 1px var(--pasivo-borde); }
+#modo.pasivo:hover, #modo.pasivo.abierto { background: var(--resalte); }
+#panico:not(:disabled), #panico:hover:not(:disabled) { background: var(--panico); color: #ffffff; }
+#colapsar { padding: 0 4px 2px; font-size: 15px; line-height: 20px; }
+
+/* Colapsada: sólo el asa. */
+body.colapsada nav { display: inline-flex; width: auto !important; }
+body.colapsada nav > :not(#asa) { display: none; }
+body.colapsada #asa { width: 14px; padding: 3px; }
+body.colapsada #aviso { display: none; }
+
+#desplegado { position: fixed; top: 23px; z-index: 5; padding: 2px 0; background: var(--menu); border: 1px solid var(--borde); white-space: nowrap; }
+.entrada { display: flex; justify-content: space-between; gap: 24px; padding: 2px 12px; line-height: 17px; cursor: default; }
+.entrada:hover, .entrada.activa { background: var(--resalte); }
+.entrada.apagada { color: var(--tenue); background: none; }
+.entrada .detalle { color: var(--tenue); }
+/* La palomita del modo elegido, en su columna. */
+.entrada.con-marca > span:first-child::before { content: ""; display: inline-block; width: 14px; }
+.entrada.marcada > span:first-child::before { content: "\2713"; }
+.separador { height: 1px; margin: 3px 0; background: var(--separador); }
+
+#aviso { position: fixed; left: 0; right: 0; top: 23px; z-index: 4; height: 20px; padding: 0 6px; line-height: 18px; background: var(--menu); border: 1px solid var(--borde); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#desplegado:not([hidden]) ~ #aviso { visibility: hidden; }
+</style>
+</head>
+<body>
+<nav id="barra" role="menubar" aria-label="Menú">
+    <div id="asa" title="Arrastra para mover la barra"></div>
+    <button class="accion" id="colapsar" title="Colapsar la barra" aria-label="Colapsar la barra">&lsaquo;</button>
+    <div class="titulo" role="menuitem" tabindex="0" data-menu="Archivo">Archivo</div>
+    <div class="titulo" role="menuitem" tabindex="0" data-menu="Editar">Editar</div>
+    <div class="titulo" role="menuitem" tabindex="0" data-menu="Ver">Ver</div>
+    <div class="titulo" role="menuitem" tabindex="0" data-menu="Modo" id="modo" title="Activo: aplicar hace todo el ejercicio">Activo</div>
+    <button class="accion" id="aplicar" disabled title="Aplicar a los equipos (Ctrl+Mayús+S)">Aplicar</button>
+    <button class="accion" id="panico" disabled title="Se habilita cuando más de la mitad de los combos están mal">Pánico</button>
+</nav>
+<div id="desplegado" role="menu" hidden></div>
+<div id="aviso" role="status" hidden></div>
+<script>
+var $ = function (id) { return document.getElementById(id); };
+var app = { activa: false, ocupado: false, pendientes: 0, panico: false, ancho: 0, alto: 0, modo: "activo" };
+
+// Los modos de Aplicar: lo que dice el botón y lo que explica al pasarle encima.
+var ETIQUETAS = { activo: "Activo", estricto: "Estricto", medio: "Medio", bajo: "Bajo" };
+var EXPLICA = {
+    activo: "Activo: aplicar hace todo el ejercicio",
+    estricto: "Pasivo estricto: aplicar sólo toca los routers y cores que ya traen bien su DHCP y sus /30, con sus switches",
+    medio: "Pasivo medio: aplicar sólo toca los routers y cores que ya traen bien sus /30, con sus switches",
+    bajo: "Pasivo bajo: aplicar sólo toca los routers y cores que ya empezaste, con sus switches"
+};
+
+function se() {
+    if (typeof $se === "function") { $se.apply(null, arguments); }
+}
+
+// --- Lo que manda el módulo --------------------------------------------------------
+
+function botones() {
+    $("aplicar").disabled = !app.activa || app.pendientes === 0;
+    $("panico").disabled = !app.activa || !app.panico;
+}
+
+function mostrar(d) {
+    app.activa = true;
+    app.ocupado = false;
+    app.pendientes = d.pendientes;
+    app.panico = d.panico;
+    if (d.modo) { modo(d.modo); }
+    botones();
+}
+
+// El modo que tiene el módulo; en uno pasivo, el botón se pinta.
+function modo(m) {
+    if (!ETIQUETAS.hasOwnProperty(m)) { return; }
+    app.modo = m;
+    $("modo").textContent = ETIQUETAS[m];
+    $("modo").title = EXPLICA[m];
+    $("modo").classList.toggle("pasivo", m !== "activo");
+}
+
+// Aplicando: nada de volver a leer a medias.
+function ocupado() {
+    app.activa = false;
+    app.ocupado = true;
+    botones();
+}
+
+// No se pudo leer: sólo se puede volver a intentar.
+function fallo() {
+    app.activa = false;
+    app.ocupado = false;
+    botones();
+}
+
+// Un renglón bajo la barra. Lo que sigue en curso termina en "..." y se queda; lo demás se va solo.
+var DURA_AVISO = 6000, quitarAviso = null;
+function avisar(texto) {
+    clearTimeout(quitarAviso);
+    $("aviso").textContent = texto;
+    $("aviso").hidden = !texto;
+    ajustarTamano();
+    if (texto && !/\.\.\.$/.test(texto)) {
+        quitarAviso = setTimeout(function () { avisar(""); }, DURA_AVISO);
+    }
+}
+
+// --- El tamaño --------------------------------------------------------------------------
+
+// Lo justo para los títulos y los botones, sin que ningún menú tenga que ensanchar la barra. El
+// botón del modo se mide con todos sus nombres: así no cambia de ancho al elegir otro.
+function anchoBarra() {
+    var barra = $("barra"), caja = $("desplegado"), total = 0;
+    barra.style.display = "inline-flex";
+    Object.keys(ETIQUETAS).forEach(function (m) {
+        $("modo").textContent = ETIQUETAS[m];
+        total = Math.max(total, Math.ceil(barra.getBoundingClientRect().width));
+    });
+    $("modo").textContent = ETIQUETAS[app.modo];
+    barra.style.display = "";
+    caja.style.visibility = "hidden";
+    caja.hidden = false;
+    Object.keys(MENUS).forEach(function (nombre) {
+        llenarMenu(nombre);
+        total = Math.max(total, caja.offsetWidth);
+    });
+    caja.hidden = true;
+    caja.style.visibility = "";
+    return total;
+}
+
+// Una vista no dibuja fuera de su rectángulo: lo que cuelgue de la barra pide más alto.
+function ajustarTamano() {
+    var ancho = Math.ceil($("barra").getBoundingClientRect().width);
+    var barra = $("barra").offsetHeight, alto = barra;
+    ["aviso", "desplegado"].forEach(function (id) {
+        if (!$(id).hidden) { alto = Math.max(alto, barra - 1 + $(id).offsetHeight); }
+    });
+    if (ancho !== app.ancho || alto !== app.alto) {
+        app.ancho = ancho;
+        app.alto = alto;
+        se("uiTamano", ancho, alto);
+    }
+}
+
+// Colapsada sólo queda el asa, en el mismo lugar. Los atajos siguen funcionando, y lo que
+// avise mientras tanto se ve al abrirla, si no se ha ido.
+function colapsar() {
+    cerrarMenu();
+    document.body.classList.add("colapsada");
+    $("asa").title = "Clic para abrir la barra; arrastra para moverla";
+    ajustarTamano();
+}
+
+function expandir() {
+    document.body.classList.remove("colapsada");
+    $("asa").title = "Arrastra para mover la barra";
+    ajustarTamano();
+}
+
+// --- El menú -------------------------------------------------------------------------------
+
+// Aplicar y Pánico no van aquí: ya son botones de la barra.
+var enActiva = function () { return app.activa; };
+var MENUS = {
+    Archivo: [
+        { texto: "Volver a cargar", atajo: "F5", accion: function () { se("uiReleer"); },
+          activa: function () { return !app.ocupado; } },
+        { texto: "Guardar comandos como...", atajo: "Ctrl+S", accion: function () { se("uiGuardarComandos"); }, activa: enActiva },
+        { texto: "Borrar todo y aplicar", accion: borrarTodo, activa: enActiva },
+        null,
+        { texto: "Cerrar", atajo: "Ctrl+Q", accion: function () { se("uiCerrar"); } }
+    ],
+    Editar: [
+        { texto: "Copiar todo", atajo: "Ctrl+Mayús+C", accion: function () { se("uiCopiarTodo"); }, activa: enActiva }
+    ],
+    Ver: [
+        { texto: "Problemas en el Bloc de notas", atajo: "Ctrl+R", accion: function () { se("uiVerProblemas"); } }
+    ],
+    Modo: [
+        entradaModo("activo", "Activo", "todo el ejercicio"),
+        null,
+        entradaModo("estricto", "Pasivo estricto", "DHCP y /30 bien"),
+        entradaModo("medio", "Pasivo medio", "/30 bien"),
+        entradaModo("bajo", "Pasivo bajo", "lo ya empezado")
+    ]
+};
+
+// Mientras aplica no se cambia: lo que se está tecleando ya se eligió.
+function entradaModo(m, texto, detalle) {
+    return { texto: texto, detalle: detalle, accion: function () { elegirModo(m); },
+             activa: function () { return !app.ocupado; }, marcada: function () { return app.modo === m; } };
+}
+
+// Se ve de una vez; el módulo lo guarda y vuelve a leer la práctica.
+function elegirModo(m) {
+    modo(m);
+    se("uiModo", m);
+}
+
+// Borra lo que tengan los equipos: se pide dos veces.
+var pedidoBorrar = 0;
+function borrarTodo() {
+    if (Date.now() - pedidoBorrar < DURA_AVISO) {
+        pedidoBorrar = 0;
+        se("uiBorrarTodo");
+        return;
+    }
+    pedidoBorrar = Date.now();
+    avisar("Elígelo otra vez para borrar los equipos");
+}
+
+var abierto = null;
+
+function cerrarMenu() {
+    if (abierto) { abierto.classList.remove("abierto"); }
+    abierto = null;
+    $("desplegado").hidden = true;
+    ajustarTamano();
+}
+
+function llenarMenu(nombre) {
+    var caja = $("desplegado");
+    caja.textContent = "";
+    MENUS[nombre].forEach(function (e) {
+        if (e === null) {
+            var s = document.createElement("div");
+            s.className = "separador";
+            s.setAttribute("role", "separator");
+            caja.appendChild(s);
+            return;
+        }
+        var fila = document.createElement("div");
+        var vale = !e.activa || e.activa();
+        fila.className = "entrada" + (vale ? "" : " apagada");
+        fila.setAttribute("role", "menuitem");
+        if (e.marcada) {
+            var marcada = e.marcada();
+            fila.classList.add("con-marca");
+            fila.classList.toggle("marcada", marcada);
+            fila.setAttribute("role", "menuitemradio");
+            fila.setAttribute("aria-checked", String(marcada));
+        }
+        if (!vale) { fila.setAttribute("aria-disabled", "true"); }
+        var texto = document.createElement("span"), atajo = document.createElement("span");
+        texto.textContent = e.texto;
+        atajo.textContent = e.atajo || e.detalle || "";
+        if (e.detalle) { atajo.className = "detalle"; }
+        fila.appendChild(texto);
+        fila.appendChild(atajo);
+        fila.addEventListener("click", function () {
+            if (vale) {
+                cerrarMenu();
+                e.accion();
+            }
+        });
+        fila.addEventListener("mouseenter", function () {
+            caja.querySelectorAll(".activa").forEach(function (x) { x.classList.remove("activa"); });
+        });
+        caja.appendChild(fila);
+    });
+}
+
+function abrirMenu(titulo) {
+    if (abierto) { abierto.classList.remove("abierto"); }
+    abierto = titulo;
+    titulo.classList.add("abierto");
+    llenarMenu(titulo.dataset.menu);
+    var caja = $("desplegado");
+    caja.hidden = false;
+    var r = titulo.getBoundingClientRect();
+    caja.style.left = Math.max(0, Math.min(r.left, app.barra - caja.offsetWidth)) + "px";
+    ajustarTamano();
+}
+
+function moverEnMenu(paso) {
+    var filas = Array.prototype.slice.call($("desplegado").querySelectorAll(".entrada:not(.apagada)"));
+    if (!filas.length) { return; }
+    var i = filas.findIndex(function (f) { return f.classList.contains("activa"); });
+    if (i >= 0) { filas[i].classList.remove("activa"); }
+    filas[i < 0 ? (paso > 0 ? 0 : filas.length - 1) : (i + paso + filas.length) % filas.length].classList.add("activa");
+}
+
+document.querySelectorAll(".titulo").forEach(function (t) {
+    t.addEventListener("mousedown", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (abierto === t) { cerrarMenu(); } else { abrirMenu(t); }
+    });
+    t.addEventListener("mouseenter", function () {
+        if (abierto && abierto !== t) { abrirMenu(t); }
+    });
+    t.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            abrirMenu(t);
+        }
+    });
+});
+document.addEventListener("mousedown", function (e) {
+    if (abierto && !$("desplegado").contains(e.target)) { cerrarMenu(); }
+});
+// Como un menú de verdad: clic en el lienzo o en otra ventana y se cierra.
+window.addEventListener("blur", function () { if (abierto) { cerrarMenu(); } });
+
+// --- Moverla, del asa --------------------------------------------------------------------
+
+// En píxeles de pantalla: no cambian aunque la vista se mueva bajo el ratón. Hasta los 3
+// píxeles es un clic con pulso, no un arrastre: es lo que abre la barra colapsada.
+var agarre = null;
+$("asa").addEventListener("mousedown", function (e) {
+    e.preventDefault();
+    agarre = { x: e.screenX, y: e.screenY, movida: false };
+});
+document.addEventListener("mousemove", function (e) {
+    if (e.buttons === 0) { agarre = null; }     // soltó donde la página no lo vio
+    if (!agarre) { return; }
+    var dx = e.screenX - agarre.x, dy = e.screenY - agarre.y;
+    if (!agarre.movida && Math.abs(dx) < 3 && Math.abs(dy) < 3) { return; }
+    agarre.movida = true;
+    if (dx || dy) {
+        se("uiMover", dx, dy);
+        agarre.x = e.screenX;
+        agarre.y = e.screenY;
+    }
+});
+document.addEventListener("mouseup", function () {
+    if (agarre && !agarre.movida && document.body.classList.contains("colapsada")) { expandir(); }
+    agarre = null;
+});
+
+// --- Atajos y botones -------------------------------------------------------------------
+
+function aplicar() {
+    if (!$("aplicar").disabled) { se("uiAplicar"); }
+}
+
+function panico() {
+    if (!$("panico").disabled) { se("uiPanico"); }
+}
+
+document.addEventListener("keydown", function (e) {
+    var k = e.key.toLowerCase(), c = e.ctrlKey, m = e.shiftKey, hecho = true;
+    if (abierto) {
+        if (k === "escape") { cerrarMenu(); }
+        else if (k === "arrowdown") { moverEnMenu(1); }
+        else if (k === "arrowup") { moverEnMenu(-1); }
+        else if (k === "enter") {
+            var fila = $("desplegado").querySelector(".activa");
+            if (fila) { fila.click(); }
+        } else { hecho = false; }
+    }
+    else if (e.key === "F5") { if (!app.ocupado) { se("uiReleer"); } }
+    else if (c && m && k === "c") { if (app.activa) { se("uiCopiarTodo"); } }
+    else if (c && m && k === "s") { aplicar(); }
+    else if (c && k === "s") { if (app.activa) { se("uiGuardarComandos"); } }
+    else if (c && k === "r") { se("uiVerProblemas"); }
+    else if (c && k === "q") { se("uiCerrar"); }
+    else { hecho = false; }
+    if (hecho) { e.preventDefault(); }
+});
+
+$("colapsar").addEventListener("click", colapsar);
+$("aplicar").addEventListener("click", aplicar);
+$("panico").addEventListener("click", panico);
+
+app.barra = anchoBarra();
+$("barra").style.width = app.barra + "px";
+
+// $se tarda unos milisegundos en existir después de cargar la página.
+var espera = setInterval(function () {
+    if (typeof $se === "function") {
+        clearInterval(espera);
+        app.alto = 0;       // lo que se haya abierto antes de esto aún no se ha pedido
+        ajustarTamano();
+        $se("uiLista");
+    }
+}, 50);
+</script>
+</body>
+</html>

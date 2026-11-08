@@ -6,6 +6,7 @@
 *.txt text eol=crlf
 *.png binary
 *.ico binary
+*.pts binary
 
 # Fuera del zip de cada versión
 .gitattributes export-ignore
