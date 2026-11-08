@@ -276,6 +276,7 @@ async function pruebas() {
     await entrada("Pasivo estricto");
     ok("elegir uno se lo pide al módulo, y nada más", await sinTamano() === '[["uiModo","estricto"]]' && !(await menuAbierto()), await llamadas());
     ok("el botón dice el nuevo y se pinta", await textoModo() === "Estricto" && await pintado() && await estilo("#modo", "backgroundColor") === "rgb(255, 241, 194)", await estilo("#modo", "backgroundColor"));
+    ok("y al pasarle encima dice que lo inalámbrico va siempre", /; lo inalámbrico, siempre$/.test(await val("document.getElementById('modo').title")), await val("document.getElementById('modo').title"));
     ok("sin cambiar el ancho de la barra", (await llamadas()).every((l) => l[0] !== "uiTamano" || l[1] === ancho), await llamadas());
     await seguirTamano();
     await foto("modo_pasivo");

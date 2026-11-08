@@ -387,11 +387,17 @@ de `correcciones.ordenes` con `ip address`: lo que aplicar pondría en sus /30; 
 cuenta) y `_faltasDhcp` (un pool idéntico en red, máscara y puerta por cada VLAN de su sitio, también las
 de combo mal; sin `no service dhcp` ni `excluded-address` que deje sin direcciones a sus PCs). Los
 switches de `s.switches` siguen a su dueño. Con eso, `puede(n)` filtra todo: sólo lo que cumple entra a
-`quitar`, a la regla de "más de la mitad" y a `Borrar todo`; los bloques, los completos, las PCs del DHCP
-y lo inalámbrico (`_inalambricoQueCumple`, por el `sitio` de la controladora, el server y los AP, y el
-`dueno` de los teléfonos) se quedan sólo con lo suyo. Los `motivos` de lo que no cumple no se
-reportan: no se rehace. El que cumple se trata igual que en activo, y si trae otra cosa mal se borra
-entero y vuelve con su DHCP y sus /30 tal cual (el pool puede cambiar de nombre).
+`quitar`, a la regla de "más de la mitad" y a `Borrar todo`; los bloques, los completos y las PCs del
+DHCP se quedan sólo con lo suyo. Los `motivos` de lo que no cumple no se reportan: no se rehace. El que
+cumple se trata igual que en activo, y si trae otra cosa mal se borra entero y vuelve con su DHCP y sus
+/30 tal cual (el pool puede cambiar de nombre).
+
+Lo inalámbrico que no es IOS no pasa por `puede`: `ctx.inalambrico` es el mismo plan que en activo,
+en cualquier modo (lo pidió así: sale de las notas, no de lo que el alumno tecleó). Sólo los teléfonos
+de un dueño que no cumple se quedan fuera de `ctx.pcs`: se configuran, pero no se espera su IP, igual
+que con las PCs. Su parte en IOS (la nativa, la puerta del server, las troncales) sí va con su router o
+core; `_iosDelInalambrico` dice cuáles son (el del sitio de la controladora, el de su nativa y el de la
+puerta del server), y `textoProblemas` nombra a los que no cumplen.
 
 `_aplicarTodo` guarda quién cumplía al empezar y lo pasa a cada relectura (`{ cumplian }`): a media
 aplicación un equipo puede no traer ya lo que el modo pide. Lo encontró la escena en Packet Tracer: en
@@ -459,6 +465,25 @@ pero nadie se le puede asociar y el teléfono no reintenta. `P4_P3` traía uno a
 qué AP se fuera cada teléfono, y parecía intermitente. `_parchearAp` lo deja en `0` y sin DHCP. Para ver
 por qué un teléfono no conecta: `WirelessClientProcess.getCurrentNetworkAt(i)` dice qué ve en el aire y
 `getCurrentApMac()` a quién se asoció. Los AP tienen su BSSID en la MAC del radio, no en la de su puerto.
+
+Mientras un AP se une a su controladora (al arrancar, o al volver a unirse cuando su core, un 3560, se
+reinicia para IPv6), Packet Tracer guarda su `CAPWAP` sin redes; ya unido, tiene las de su grupo. Por eso
+una lista vacía no cuenta como pendiente: antes, Aplicar en activo la veía así a media aplicación, volvía a
+escribir lo inalámbrico y reabría la práctica para nada (los teléfonos tardaron 160 s en vez de 100 s).
+Lo inalámbrico puesto antes que su core, como en los modos pasivos, se levanta solo: con el IPv4 de SWR1
+tecleado a mano después, en la propuesta de examen, los AP tuvieron IP a los 48 s y los cuatro teléfonos a
+los 100 s, sin volver a aplicar. Tras reabrir, con el core arrancando, los teléfonos tardan de 100 a 160 s:
+`_pedirIps` los espera hasta 48 intentos (unos 4 minutos) antes de decir que no quedaron.
+
+Un EtherChannel con nativa configurado en vivo no se levanta: al entrar los puertos (troncal, nativa y
+`channel-group`), Packet Tracer crea el `Port-channel` vacío, sin troncal ni nativa, y queda `Po1(SD)` con
+los puertos suspendidos `(s)` en el lado active y sueltos `(I)` en el passive; rebotarlos no sirve, y las PCs
+de ese switch no tienen IP. Reabrir la práctica lo arregla, y por eso no se veía: con lo inalámbrico pendiente,
+Aplicar siempre terminaba reabriendo. Puesto antes que lo de IOS, como en pasivo, salió en SWR1 y SW6 de la
+propuesta. Lo que lo levantó fue que el `Port-channel` ya existiera con su nativa al entrar los puertos: ahí
+toma de ellos la troncal. Por eso `_canal`, si el sitio tiene nativa, crea primero el `Port-channel` con su
+troncal y su nativa (con la encapsulación en un 3560); así quedó `Po1(SU)` a los 5 s y las 37 PCs con IP a los
+72 s. Sin nativa, el `Port-channel` que se crea solo sí trae la troncal y no se toca.
 
 **Archivos:**
 

@@ -1674,8 +1674,17 @@ function _troncal(d, puerto, s) {
     return _orden("troncal", lineas, !!(ic && ic.modo === "trunk" && _traeNativa(ic, s)), _malEnTroncal(ic, puerto, s));
 }
 
+// Con nativa, Packet Tracer crea vacío el Port-channel al entrar los puertos (sin troncal ni nativa) y los
+// deja suspendidos hasta reabrir la práctica: se vio en SWR1 de la propuesta, Po1(SD) con Fa0/2(s). Por
+// eso va antes, con su troncal y su nativa. Sin nativa, el que se crea solo sí trae la troncal.
 function _canal(d, puertos, grupo, modo, s) {
-    var lineas = [_cabecera(puertos)];
+    var lineas = [];
+    if (s.nativa) {
+        lineas.push("interface Port-channel" + grupo);
+        if (_pideEncapsulacion(d)) { lineas.push(" switchport trunk encapsulation dot1q"); }
+        lineas.push(" switchport mode trunk", " switchport trunk native vlan " + s.nativa.numero);
+    }
+    lineas.push(_cabecera(puertos));
     if (_pideEncapsulacion(d)) { lineas.push(" switchport trunk encapsulation dot1q"); }
     lineas.push(" switchport mode trunk");
     lineas = lineas.concat(_lineasNativa(s), [" channel-group " + grupo + " mode " + modo]);

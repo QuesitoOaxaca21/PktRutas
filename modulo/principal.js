@@ -189,7 +189,10 @@ function _vigilar() {
 
 function _estadoLeido() {
     if (!_CTX.plan.sitios.length) { return "Sin notas con VLANs"; }
-    if (_CTX.pasivo && !_CTX.pasivo.cumplen.length) { return _conModo("Ningún equipo cumple todavía"); }
+    // Lo inalámbrico se pone en cualquier modo: Aplicar sirve aunque nadie cumpla.
+    if (_CTX.pasivo && !_CTX.pasivo.cumplen.length) {
+        return _conModo("Ningún equipo cumple todavía" + (_CTX.inalambrico.pendiente ? "; falta lo inalámbrico" : ""));
+    }
     return _conModo(_pendiente());
 }
 
@@ -475,8 +478,9 @@ function _pedirIps(intento, archivo, renovar) {
         _aviso(total + " de " + total + " PCs con IP");
         return;
     }
-    // Un teléfono tarda más: espera a que su AP se una a la controladora.
-    if (intento >= (faltan.some(function (p) { return p.telefono; }) ? 30 : 14)) {
+    // Un teléfono tarda más: espera a que su AP se una a la controladora. Tras reabrir la práctica, con
+    // el core arrancando, en Packet Tracer se midieron de 100 a 160 s.
+    if (intento >= (faltan.some(function (p) { return p.telefono; }) ? 48 : 14)) {
         _aviso((total - faltan.length) + " de " + total + " PCs con IP; revísalas");
         _abrirBloc("problemas", "se pidió dhcp y estas pcs no quedaron en su red: "
                    + faltan.map(function (p) { return p.pc; }).join(", ").toLowerCase() + "\n\n" + _textoProblemas(), false);
@@ -543,8 +547,9 @@ function _aplicarTodo(mensaje, alTerminar, opciones) {
             releer();
         }
         var cuantos = Object.keys(borrados).length;
-        _mostrar(mensaje || (_conModo("Aplicado a " + aplicados + (aplicados === 1 ? " equipo" : " equipos")
-                                      + (cuantos ? ", " + cuantos + (cuantos === 1 ? " se borró" : " se borraron") : ""))
+        var hecho = aplicados || !inalambrico ? "Aplicado a " + aplicados + (aplicados === 1 ? " equipo" : " equipos") + (inalambrico ? " y lo inalámbrico" : "")
+            : "Aplicado lo inalámbrico";
+        _mostrar(mensaje || (_conModo(hecho + (cuantos ? ", " + cuantos + (cuantos === 1 ? " se borró" : " se borraron") : ""))
                              + (inalambrico ? "; guarda la práctica" : "")));
         // Con mensaje propio (el pánico) quien llama abre el Bloc de notas con su resumen.
         if (!mensaje && (errores.length || hayProblemas(_CTX))) { _abrirBloc("problemas", _textoProblemas(errores), false); }

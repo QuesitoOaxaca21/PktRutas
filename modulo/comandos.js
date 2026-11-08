@@ -578,7 +578,8 @@ function comandosPorEquipo(ctx, completa) {
 // Activo hace todo el ejercicio. Los pasivos sólo tocan lo que ya empezaste, y cada uno pide más de lo
 // tuyo antes de tocar un router o core. El que cumple se configura igual que en activo (también se
 // rehace si trae algo mal), y con él los switches que cuelgan de él. El que no, no se toca: ni se
-// borra, ni se le pone nada, ni a sus PCs se les pide DHCP.
+// borra, ni se le pone nada, ni a sus PCs se les pide DHCP. Lo inalámbrico que no es IOS (controladora,
+// server, AP y teléfonos) se pone en cualquier modo: sale de las notas, no de lo que hayas tecleado.
 var MODOS = {
     activo: { nombre: "activo", pide: [] },
     estricto: { nombre: "pasivo estricto", pide: ["empezado", "enlaces", "dhcp"],
@@ -668,14 +669,18 @@ function _pasivo(ctx, modo, cumplian) {
     return p;
 }
 
-// Lo inalámbrico va con el sitio de su controladora.
-function _inalambricoQueCumple(ina, puede) {
-    function delSitio(x) { return puede(x.sitio); }
-    ina.controladoras = ina.controladoras.filter(delSitio);
-    ina.servidores = ina.servidores.filter(delSitio);
-    ina.aps = ina.aps.filter(delSitio);
-    ina.telefonos = ina.telefonos.filter(function (t) { return puede(t.dueno); });
-    ina.pendiente = ina.controladoras.concat(ina.servidores, ina.aps, ina.telefonos).some(function (x) { return x.pendiente; });
+// Los routers y cores que llevan la parte en IOS de lo inalámbrico: el del sitio de la controladora,
+// el de su nativa si es otro, y el de la puerta del server. En pasivo van con lo que pide el modo.
+function _iosDelInalambrico(ctx) {
+    var nombres = [];
+    function suma(d) { if (d && nombres.indexOf(d.nombre) < 0) { nombres.push(d.nombre); } }
+    ctx.plan.sitios.forEach(function (s) {
+        if (!s.nativa || !s.inalambricos.some(function (x) { return x.d.esControladora; })) { return; }
+        suma(s.dueno);
+        if (s.routerNativa) { suma(s.routerNativa.dueno); }
+    });
+    ctx.inalambrico.servidores.forEach(function (srv) { suma(ctx.topo.porNombre(srv.router)); });
+    return nombres;
 }
 
 // --- todo junto ---------------------------------------------------------------------------------------
@@ -754,7 +759,6 @@ function analizarXml(xml, opciones) {
     ctx.borraTodos = todos && !pedido ? Object.keys(motivos).length + " de " + _equiposDelPlan(ctx).filter(puede).length : null;
     ctx.bloques = comandosPorEquipo(ctx, false).filter(function (b) { return puede(b.equipo); });
     ctx.completos = comandosPorEquipo(ctx, true).filter(function (b) { return puede(b.equipo); });
-    if (pasivo) { _inalambricoQueCumple(ctx.inalambrico, puede); }
     ctx.pcs = [];
     ctx.plan.sitios.forEach(function (s) {
         if (!puede(s.dueno.nombre)) { return; }
@@ -765,7 +769,10 @@ function analizarXml(xml, opciones) {
                            red: v ? v.red : null, gateway: v ? v.gateway : null });
         });
     });
+    // Todos los teléfonos se configuran, pero su IP sólo se espera donde su router o core cumple, igual
+    // que con las PCs.
     ctx.inalambrico.telefonos.forEach(function (t) {
+        if (!puede(t.dueno)) { return; }
         ctx.pcs.push({ pc: t.equipo, vlan: t.vlan, reservado: t.reservado, dueno: t.dueno, red: t.red, gateway: t.gateway, telefono: true });
     });
     return ctx;
@@ -817,9 +824,18 @@ function textoProblemas(ctx, nombreArchivo) {
     // En pasivo va primero qué se toca y qué no: es lo que cambia lo que hace aplicar.
     if (ctx.pasivo) {
         var p = ctx.pasivo, total = p.cumplen.length + p.noCumplen.length;
-        var cabeza = ["modo " + MODOS[p.modo].nombre + ": aplicar sólo toca los routers y cores que " + MODOS[p.modo].explica,
-                      ("cumplen " + p.cumplen.length + " de " + total
-                       + (p.cumplen.length ? ": " + p.cumplen.map(function (n) { return vis[n]; }).join(", ") : "")).toLowerCase()];
+        var cabeza = ["modo " + MODOS[p.modo].nombre + ": aplicar sólo toca los routers y cores que " + MODOS[p.modo].explica];
+        if (ctx.inalambrico.controladoras.length) {
+            var fuera = _iosDelInalambrico(ctx).filter(function (n) { return !p.elegibles[n]; });
+            var ina = "lo inalámbrico (controladora, server, ap y teléfonos) sí lo pone, en cualquier modo";
+            if (fuera.length) {
+                ina += "; lo que lleva en ios (la nativa, " + (ctx.inalambrico.servidores.length ? "la puerta del server, " : "") + "las troncales) va con "
+                    + _listaVis(vis, fuera.map(function (n) { return ctx.topo.porNombre(n); })) + ", que no " + (fuera.length === 1 ? "cumple" : "cumplen");
+            }
+            cabeza.push(ina.toLowerCase());
+        }
+        cabeza.push(("cumplen " + p.cumplen.length + " de " + total
+                     + (p.cumplen.length ? ": " + p.cumplen.map(function (n) { return vis[n]; }).join(", ") : "")).toLowerCase());
         p.faltas.forEach(function (f) { cabeza.push(("no se toca " + vis[f[0]] + ": " + f[1]).toLowerCase()); });
         texto = cabeza.join("\n") + (texto ? "\n\n" + texto : "");
     }

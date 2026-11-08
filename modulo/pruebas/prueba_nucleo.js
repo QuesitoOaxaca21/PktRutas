@@ -973,6 +973,7 @@ ${cable("t", "FastEthernet0/3", "p", "FastEthernet0")}<NOTES>${nota("{n}", 50, 5
     assert.strictEqual(motivosDe(c, "S2"), "", JSON.stringify(c.motivos));
     const s1 = bloqueDe(c, "S1");
     assert.ok(s1.indexOf(" no channel-group") >= 0 && s1.indexOf(" channel-group 1 mode active") > s1.indexOf(" no channel-group"), s1.join("|"));
+    assert.ok(!s1.some((l) => /^interface Port-channel/.test(l)), "sin nativa, el Port-channel se crea solo: " + s1.join("|"));
 });
 
 // --- lo inalámbrico ---------------------------------------------------------------------------------
@@ -1068,6 +1069,18 @@ prueba("los AP van en troncal con la nativa, y la PC de la controladora va en la
     assert.strictEqual(pc.gateway, "16.0.0.30");
     assert.strictEqual(pc.reservado, false);
     assert.notStrictEqual(Array.from(c.pcs).find((p) => p.pc === "PC1").vlan, 6, "la que cuelga de otro switch no");
+});
+
+prueba("con nativa, el Port-channel va antes que sus puertos, con su troncal y su nativa: así no se suspende", () => {
+    const c = analizar(wifi().replace("<NOTES>", cable("m1", "FastEthernet0/6", "s1", "FastEthernet0/5") + "<NOTES>"));
+    const m = bloqueDe(c, "SWR1"), s1 = bloqueDe(c, "S1");
+    assert.deepStrictEqual(lineasDe(m, "interface Port-channel1"), [" switchport trunk encapsulation dot1q", " switchport mode trunk", " switchport trunk native vlan 6"], m.join("|"));
+    assert.deepStrictEqual(lineasDe(s1, "interface Port-channel1"), [" switchport mode trunk", " switchport trunk native vlan 6"], s1.join("|"));
+    for (const b of [m, s1]) {
+        const po = b.indexOf("interface Port-channel1"), grupo = b.findIndex((l) => /^ channel-group 1 mode /.test(l));
+        assert.ok(po >= 0 && grupo > po, "primero el Port-channel: " + b.join("|"));
+    }
+    assert.ok(m.includes(" channel-group 1 mode active") && s1.includes(" channel-group 1 mode passive"), "active el más cercano al core");
 });
 
 prueba("el server lleva su red 192.168 en el router, y todos llegan a ella", () => {
@@ -1457,6 +1470,22 @@ prueba("un AP de fábrica no pide IP por su cable: se le enciende el DHCP", () =
     assert.strictEqual(analizar(nuevo).inalambrico.pendiente, false);
 });
 
+// Cambia en el XML sólo el bloque de un equipo.
+const enEquipo = (xml, nombre, f) => xml.split("<DEVICE>").map((b) => (b.includes(`<NAME translate="true">${nombre}</NAME>`) ? f(b) : b)).join("<DEVICE>");
+
+prueba("un AP que se está uniendo a su controladora, con su lista de redes vacía, no cuenta como pendiente", () => {
+    m.__xml = wifi();
+    m.__ina = analizar(m.__xml).inalambrico;
+    const puesto = vm.runInContext("parchearInalambrico(__xml, __ina)", m);
+    assert.strictEqual(analizar(puesto).inalambrico.pendiente, false);
+    // Así lo deja Packet Tracer mientras el AP se une, o se vuelve a unir, a la controladora: ella le da sus redes.
+    const uniendose = analizar(enEquipo(puesto, "AP1", (b) => b.replace(/<WLANS>[\s\S]*?<\/WLANS>/, "<WLANS/>")));
+    assert.deepStrictEqual(Array.from(uniendose.topo.porNombre("AP1").ssids), []);
+    assert.strictEqual(uniendose.inalambrico.pendiente, false);
+    const otras = analizar(enEquipo(puesto, "AP1", (b) => b.replace("<SSID>ALUMNOS</SSID>", "<SSID>OTRA</SSID>")));
+    assert.strictEqual(otras.inalambrico.aps.find((a) => a.equipo === "AP1").pendiente, true, "con otras redes, sí");
+});
+
 // --- los modos de Aplicar ------------------------------------------------------------------------------
 
 // R1 con su /30 (.5, por la nota '.4') y sus dos pools, como lo dejaría quien hace a mano su parte.
@@ -1573,20 +1602,43 @@ prueba("en pasivo, lo que cumplía al empezar a aplicar sigue cumpliendo hasta t
     assert.deepStrictEqual(equiposDe(conModo("bajo", {})), [], "sin eso, nada");
 });
 
-prueba("en pasivo lo inalámbrico va con el sitio de su controladora", () => {
-    const nada = analizar(wifi(), { modo: "bajo" });
-    assert.strictEqual(nada.pasivo.cumplen.length, 0);
-    assert.strictEqual(nada.inalambrico.pendiente, false);
-    assert.strictEqual(nada.inalambrico.controladoras.length + nada.inalambrico.aps.length + nada.inalambrico.telefonos.length, 0);
-    assert.strictEqual(nada.pcs.length, 0);
-    assert.strictEqual(nada.bloques.length, 0);
-    const swr1 = analizar(wifi({ cfg: { SWR1: ["hostname SWR1", "interface Vlan2", " ip address 16.0.1.254 255.255.255.0"] } }), { modo: "bajo" });
+const LINEA_INA = "\nlo inalámbrico (controladora, server, ap y teléfonos) sí lo pone, en cualquier modo";
+const textoIna = (c) => Array.from(llama("textoInalambrico", c.inalambrico)).join("\n");
+
+prueba("en cualquier modo lo inalámbrico se pone completo, aunque su router o core no cumpla", () => {
+    const activo = analizar(wifi());
+    assert.strictEqual(activo.inalambrico.pendiente, true);
+    for (const modo of ["estricto", "medio", "bajo"]) {
+        const c = analizar(wifi(), { modo });
+        assert.strictEqual(c.pasivo.cumplen.length, 0, modo);
+        assert.strictEqual(c.bloques.length, 0, modo + ": nada de IOS");
+        assert.strictEqual(c.inalambrico.pendiente, true, modo);
+        assert.strictEqual(textoIna(c), textoIna(activo), modo + ": lo mismo que en activo");
+        assert.strictEqual(c.pcs.length, 0, modo + ": ni PCs ni teléfonos esperan IP donde nadie cumple");
+        const t = llama("textoProblemas", c);
+        assert.ok(t.includes(LINEA_INA + "; lo que lleva en ios (la nativa, la puerta del server, las troncales) va con r1 y swr1, que no cumplen\ncumplen 0 de 3\n"), t);
+    }
+    // Ya escrito en el archivo no falta nada de eso, y lo de IOS sigue sin tocarse.
+    m.__xml = wifi();
+    m.__ina = analizar(m.__xml, { modo: "estricto" }).inalambrico;
+    const puesto = analizar(vm.runInContext("parchearInalambrico(__xml, __ina)", m), { modo: "estricto" });
+    assert.strictEqual(puesto.inalambrico.pendiente, false);
+    assert.strictEqual(puesto.bloques.length, 0);
+    assert.strictEqual(llama("textoProblemas", analizar(wifi())).indexOf(LINEA_INA), -1, "en activo no hace falta decirlo");
+});
+
+prueba("en pasivo, los teléfonos esperan su IP sólo si su router o core cumple, y se dice quién falta", () => {
+    const swr1Cfg = ["hostname SWR1", "interface Vlan2", " ip address 16.0.1.254 255.255.255.0"];
+    const swr1 = analizar(wifi({ cfg: { SWR1: swr1Cfg } }), { modo: "bajo" });
     assert.deepStrictEqual(Array.from(swr1.pasivo.cumplen), ["SWR1"]);
-    assert.strictEqual(swr1.inalambrico.controladoras.length, 1);
-    assert.strictEqual(swr1.inalambrico.aps.length, 2);
-    assert.strictEqual(swr1.inalambrico.telefonos.length, 2);
-    assert.strictEqual(swr1.inalambrico.pendiente, true);
     assert.deepStrictEqual(equiposDe(swr1), ["S1", "SWR1"], "R1, que lleva la nativa, no cumple");
+    assert.deepStrictEqual(Array.from(swr1.pcs).filter((p) => p.telefono).map((p) => p.pc), ["Smartphone0", "Smartphone1"]);
+    assert.strictEqual(textoIna(swr1), textoIna(analizar(wifi({ cfg: { SWR1: swr1Cfg } }))));
+    assert.ok(llama("textoProblemas", swr1).includes(LINEA_INA + "; lo que lleva en ios (la nativa, la puerta del server, las troncales) va con r1, que no cumple\n"), llama("textoProblemas", swr1));
+    const r1Cfg = ROUTER.concat(["interface Ethernet0/1/0", " ip address 16.0.0.5 255.255.255.252"]);
+    const ambos = analizar(wifi({ cfg: { SWR1: swr1Cfg, R1: r1Cfg } }), { modo: "bajo" });
+    assert.deepStrictEqual(Array.from(ambos.pasivo.cumplen).sort(), ["R1", "SWR1"]);
+    assert.ok(llama("textoProblemas", ambos).includes(LINEA_INA + "\n"), llama("textoProblemas", ambos));
 });
 
 prueba("cifrar y descifrar dan lo mismo, con acentos y más de un bloque", () => {
@@ -2093,6 +2145,40 @@ prueba("módulo: si sólo falta lo inalámbrico, Aplicar se puede usar", () => {
     pt.llama("_mostrar");
     assert.ok(/"pendientes":1/.test(pt.ultimaUi()), pt.ultimaUi());
     assert.strictEqual(pt.aviso, "Falta lo inalámbrico");
+});
+
+prueba("módulo: en pasivo, aunque ningún equipo cumpla, Aplicar pone lo inalámbrico y no teclea nada en IOS", () => {
+    const pt = ptDeMentira(wifi(), "C:/saves/P.pkt");
+    const ios = ["R1", "R2", "SWR1", "S1"];
+    pt.red = {};
+    ios.forEach((n) => { pt.red[n] = equipoDeMentira(""); });
+    pt.abrir();
+    pt.correr();
+    pt.llama("uiModo", "estricto");
+    assert.strictEqual(pt.aviso, "Pasivo estricto: ningún equipo cumple todavía; falta lo inalámbrico");
+    assert.strictEqual(JSON.parse(pt.ultimaUi().slice(8, -1)).pendientes, 1, "Aplicar se puede usar");
+    pt.llama("uiAplicar");
+    pt.correr();
+    assert.strictEqual(pt.reabierta.ruta, "C:/saves/P.pkt");
+    assert.strictEqual(pt.ev("_CTX.inalambrico.pendiente"), false);
+    assert.strictEqual(pt.aviso, "Pasivo estricto: aplicado lo inalámbrico; guarda la práctica");
+    ios.forEach((n) => assert.strictEqual(pt.red[n].tecleado.length, 0, n + " no se toca"));
+    pt.llama("uiModo", "activo");
+    assert.ok(/^Activo: 4 equipos por configurar$/.test(pt.aviso), pt.aviso);
+    pt.llama("uiAplicar");
+    pt.correr();
+    assert.strictEqual(pt.aviso, "Aplicado a 4 equipos", "lo inalámbrico ya estaba");
+});
+
+prueba("módulo: el aviso dice si se aplicó lo inalámbrico junto con los equipos", () => {
+    const pt = ptDeMentira(wifi(), "C:/saves/P.pkt");
+    pt.red = {};
+    ["R1", "R2", "SWR1", "S1"].forEach((n) => { pt.red[n] = equipoDeMentira(""); });
+    pt.abrir();
+    pt.correr();
+    pt.llama("uiAplicar");
+    pt.correr();
+    assert.strictEqual(pt.aviso, "Aplicado a 4 equipos y lo inalámbrico; guarda la práctica");
 });
 
 prueba("módulo: si Packet Tracer no la puede abrir, se dice", () => {

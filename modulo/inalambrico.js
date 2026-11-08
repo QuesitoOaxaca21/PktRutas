@@ -232,7 +232,6 @@ function planInalambrico(topo, res, plan) {
         }
         var srv = _planServidor(topo, s, tomadas);
         if (srv) {
-            srv.sitio = s.dueno.nombre;     // lo inalámbrico va con su sitio (los modos pasivos)
             ina.servidores.push(srv);
             if (srv.vlan) {
                 ina.supuestos.push(srv.equipo + " va en la vlan " + srv.vlan + " (" + NOMBRE_VLAN_SERVIDOR.toLowerCase() + "), con su puerta en " + _nombreSitio(s) + ": su core sólo hace de switch y no puede llevar ip en el puerto");
@@ -279,7 +278,7 @@ function planInalambrico(topo, res, plan) {
                 grupos.push(g);
             }
             enGrupos.push({ mac: a.d.mac, grupo: g.nombre });
-            ina.aps.push({ equipo: a.d.nombre, grupo: g.nombre, wlans: listas[i], controladora: wlcs[0].d.nombre, plan: null, sitio: s.dueno.nombre });
+            ina.aps.push({ equipo: a.d.nombre, grupo: g.nombre, wlans: listas[i], controladora: wlcs[0].d.nombre, plan: null });
             redesAps.push({ d: a.d, lista: listas[i], porNombre: porNombre, sitio: s });
         });
         if (!grupos.length) { grupos.push({ nombre: "default-group", wlans: usadas }); }
@@ -290,7 +289,7 @@ function planInalambrico(topo, res, plan) {
                            radiusClave: "", radiusIndice: 4294967295, vlan: 0, id: 1, interfaz: "management", modoSwitch: 1, modoAuth: 1 }];
             usadas.forEach(function (r, i) { wlans.push(_wlanEap(porNombre[r.toUpperCase()], i + 2, srv)); });
             var c = {
-                equipo: x.d.nombre, sitio: s.dueno.nombre, hostname: WLC_NOMBRE, ip: ip, mascara: mascara, gw: s.nativa.gateway,
+                equipo: x.d.nombre, hostname: WLC_NOMBRE, ip: ip, mascara: mascara, gw: s.nativa.gateway,
                 interfaces: [{ nombre: "management", ip: ip, mascara: mascara, gw: s.nativa.gateway, vlan: 0, dhcp: "0.0.0.0" }].concat(usadas.map(function (r) {
                     var v = porNombre[r.toUpperCase()];
                     return { nombre: v.nombre, ip: enteroAIp(ipAEntero(v.gateway) - 1 - k), mascara: mascaraDe(v.red.p), gw: v.gateway, vlan: v.numero, dhcp: v.gateway };
@@ -309,10 +308,14 @@ function planInalambrico(topo, res, plan) {
                                                                              { activo: true, puerto: srv.puerto, clientes: srv.clientes, usuarios: srv.usuarios });
         }
     });
+    // Sus redes se las da la controladora al unirse. Mientras se une (al arrancar, o otra vez si su core
+    // se reinicia para IPv6), Packet Tracer deja su lista vacía: eso no es que le falte algo, y volver a
+    // escribirlo reiniciaría todo para nada.
     ina.aps.forEach(function (a) {
         var d = topo.porNombre(a.equipo), c = ina.controladoras.filter(function (x) { return x.equipo === a.controladora; })[0];
         a.plan = c.wlans.filter(function (w) { return a.wlans.indexOf(w.nombre) >= 0; });
-        a.pendiente = !d.radioBien || !d.cableBien || JSON.stringify(d.ssids.slice().sort()) !== JSON.stringify(a.plan.map(function (w) { return w.ssid; }).sort());
+        var tiene = d.ssids.slice().sort(), tocan = a.plan.map(function (w) { return w.ssid; }).sort();
+        a.pendiente = !d.radioBien || !d.cableBien || (tiene.length > 0 && JSON.stringify(tiene) !== JSON.stringify(tocan));
     });
 
     // Los teléfonos: cada uno con el AP que le queda más cerca. Si su nombre dice una red, ésa; si ya

@@ -162,8 +162,13 @@ toca nada: ni se borra, ni se le agrega, ni a sus PCs se les pide DHCP.
 enlace en el /30 de su nota. Un enlace apagado sí cuenta (Aplicar lo enciende); el hostname solo no
 cuenta como empezar, porque puede venir puesto. En un modo pasivo el botón se pinta de amarillo, el
 aviso dice cuántos no cumplen, y el Bloc de notas de problemas empieza con qué le falta a cada uno.
-Lo inalámbrico va con el sitio de su controladora. El modo se queda guardado: sigue igual al volver
-a abrir Packet Tracer.
+El modo se queda guardado: sigue igual al volver a abrir Packet Tracer.
+
+**Lo inalámbrico se pone en cualquier modo**, siempre que las notas estén bien: la controladora, el
+server, los AP y los teléfonos no son IOS y salen de las notas, no de lo que hayas tecleado. Aunque
+ningún equipo cumpla, **Aplicar** los configura. Lo que eso lleva en IOS (la nativa, la puerta del
+server y las troncales) sí va con su router o core, como todo lo demás: si ése no cumple, el Bloc de
+notas lo nombra, y funciona en cuanto lo tecleas tú o lo aplica otro modo.
 
 **Lo inalámbrico.** Si hay una controladora (WLC-3504) cableada, además de las notas de siempre
 van dos más. Una lista con el nombre de cada VLAN, sin nombre de equipo; la que se llama `NATIVA` es
@@ -209,8 +214,10 @@ directo al switch core. Con eso, **Aplicar** pone:
   Si mueves el cable después de aplicar, lo que quedó en el lugar de antes se quita: la IP del puerto
   sin cable y la ruta que ya sobra.
 * **Switches:** toda troncal de ese sitio lleva `switchport trunk native vlan n`, también las de los
-  AP, la de la controladora y el segundo cable. La PC pegada al switch de la controladora y más
-  cercana a ella queda en la nativa: es la que entra al portal.
+  AP, la de la controladora y el segundo cable. Si la troncal es un EtherChannel, su `Port-channel` va
+  primero, ya con su troncal y su nativa: si no, Packet Tracer lo crea vacío y deja sus puertos
+  suspendidos. La PC pegada al switch de la controladora y más cercana a ella queda en la nativa: es
+  la que entra al portal.
 * **Server:** IP fija, AAA encendido y RADIUS en el puerto 1812, con su cliente en la IP de la
   controladora. Nombre del cliente, secreto, usuario y contraseña son `majli`.
 * **Controladora:** nombre `WLC` y portal con `admin` / `Abc1234`. Su IP es la penúltima de la nativa
@@ -224,7 +231,7 @@ directo al switch core. Con eso, **Aplicar** pone:
 La controladora no tiene consola, así que eso no sale como comandos: va al pie de los comandos en el
 Bloc de notas, por si quieres verlo, pero no se copia. Para ponerlo, el módulo lo escribe en la
 práctica y la vuelve a abrir desde memoria: los equipos reinician con su configuración, y los
-teléfonos tardan cerca de un minuto en conectarse. El archivo no se toca hasta que guardes.
+teléfonos tardan de uno a tres minutos en conectarse. El archivo no se toca hasta que guardes.
 
 **Pánico.** El botón se habilita cuando más de la mitad de los combos están mal.
 Corrige en las notas sólo los errores pequeños, los que se justifican con el mismo
