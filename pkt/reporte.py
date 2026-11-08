@@ -251,6 +251,7 @@ _COMO = {
     "nombre": "la nota lo nombra",
     "configuración": "sus redes ya estaban configuradas ahí",
     "cercanía": "POR CERCANÍA: escribe el hostname en la nota para asegurarlo",
+    "sin LAN": "la nota nombra al router del que cuelga",
 }
 
 _AYUDA_PLAN = [

@@ -296,13 +296,15 @@ VLAN 4  16.0.0.128 - 16.0.0.255   - 255.255.255.128 gw 16.0.0.254</pre>
     <ul>
       <li><strong>Primer renglón:</strong> el nombre del router o core y la red base, en el mismo
         renglón o justo abajo. Luego una VLAN por renglón con su diagonal.</li>
-      <li><strong>El orden de las VLANs no importa.</strong> Se reparten de la más grande a la más
-        chica y cada una toma el primer bloque libre, saltándose tus enlaces.</li>
+      <li><strong>El orden en que las escribas no importa.</strong> Se hace una tabla por VLAN, de la
+        más chica a la más grande, y cada una toma el primer bloque libre, saltándose tus enlaces y
+        lo ya repartido.</li>
       <li><strong>Base sin diagonal:</strong> se reparte desde esa dirección, dentro de la red de su
         clase (<code>16.0.0.0</code> se toma como /8). Con bases privadas escribe la diagonal:
         <code>192.168.0.0/16</code>.</li>
-      <li><strong>La misma base en varias redes:</strong> quedan una tras otra, primero los routers
-        (R1, R2, R3…) y luego los cores.</li>
+      <li><strong>La misma base en varias redes:</strong> en cada tabla van por número de router, y el
+        core ocupa el lugar del router del que cuelga: SWR1 (de R1), R2, R3… Si la práctica ya trae
+        redes configuradas en otro orden, se respeta.</li>
       <li><strong>Gateway:</strong> la última dirección utilizable. La SVI o subinterfaz y el pool de
         DHCP usan el mismo.</li>
       <li><strong>Nombre de la VLAN:</strong> opcional (<code>VLAN 30/24 VENTAS</code>). Si no lo

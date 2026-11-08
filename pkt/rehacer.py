@@ -48,10 +48,6 @@ def ip_suelta(topo, disp, puerto) -> bool:
         for d in topo.dispositivos)
 
 
-def _lista(numeros) -> str:
-    return ",".join(str(n) for n in sorted(numeros))
-
-
 def motivos(topo, rutas) -> dict:
     """{equipo: [motivo, ...]} de los equipos que hay que rehacer desde cero."""
     salida = {}
@@ -133,16 +129,13 @@ def motivos(topo, rutas) -> dict:
         # Una prioridad de STP que le compite a la raíz de su red (una raíz
         # secundaria, más alta, sí se vale).
         if sitio.raiz is not None:
-            numeros = {1} | {v.numero for v in sitio.vlans}
             for nombre in list(sitio.switches) + [sitio.dueno.nombre]:
                 disp = por_nombre.get(nombre)
                 if nombre == sitio.raiz or disp is None or disp.cfg is None:
                     continue
-                bajas = [n for n in numeros if disp.cfg.stp.get(n) is not None
-                         and disp.cfg.stp[n] <= PRIORIDAD_RAIZ]
-                if bajas:
-                    anota(disp, "tiene prioridad de STP en la VLAN %s, y la raíz de su red "
-                          "es %s" % (_lista(bajas), vis[sitio.raiz]))
+                if disp.cfg.stp.get(1, 32768) <= PRIORIDAD_RAIZ:
+                    anota(disp, "tiene prioridad de STP en la VLAN 1, y la raíz de su red "
+                          "es %s" % vis[sitio.raiz])
 
         # Router-on-a-stick: el puerto de las subinterfaces no lleva IP, y cada
         # subinterfaz lleva su propia VLAN.
@@ -172,7 +165,7 @@ def quitar(lineas):
     """(running-config sin lo que el programa configura, comandos que lo
     quitan): rutas, pools, prioridades de STP, subinterfaces, SVI (menos la
     VLAN 1), Port-channel, canales, IPs de los puertos y 'no switchport'."""
-    limpias, comandos = [], []
+    limpias, comandos, creadas = [], [], []
     i = 0
     while i < len(lineas):
         linea = lineas[i].rstrip()
@@ -198,7 +191,9 @@ def quitar(lineas):
             tipo = nombre.lower()
             if "." in tipo or tipo.startswith("port-channel") or \
                     (tipo.startswith("vlan") and tipo != "vlan1"):
-                comandos.append("no interface " + nombre)
+                # Al último: en Packet Tracer, borrar el Port-channel antes de soltar
+                # sus puertos los deja apagados.
+                creadas.append("no interface " + nombre)
                 continue
             if tipo != "vlan1":
                 deja, quita = [], []
@@ -214,7 +209,7 @@ def quitar(lineas):
                     elif xs == "no switchport":
                         quita.append(" switchport")
                     elif xs.startswith("channel-group "):
-                        quita.append(" no channel-group")
+                        quita += [" no channel-group", " no shutdown"]
                     else:
                         deja.append(x)
                 if quita:
@@ -224,4 +219,4 @@ def quitar(lineas):
         if s == "!" and limpias and limpias[-1].strip() == "!":
             continue                            # sin '!' repetidos donde se quitó algo
         limpias += [linea] + cuerpo
-    return limpias, comandos
+    return limpias, comandos + creadas

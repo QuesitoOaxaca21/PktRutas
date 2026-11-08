@@ -158,6 +158,7 @@ class Sitio:
     inicio: object = None              # base sin diagonal: desde dónde se reparte
     pedidas: list = field(default_factory=list)          # [Pedida]
     reparto: str = ""                  # "en partes iguales", "por diagonal"...
+    rotulo: str | None = None          # el router de la nota, si la LAN cuelga de otro
 
 
 @dataclass
@@ -465,6 +466,10 @@ def _interpretar(numero, cuerpo, avisos, base=None):
         if difusion:
             bloques = list(ipaddress.summarize_address_range(
                 ipaddress.IPv4Address(red_txt), ipaddress.IPv4Address(difusion)))
+            if len(bloques) != 1:
+                # La segunda dirección también puede ser la última utilizable.
+                bloques = list(ipaddress.summarize_address_range(
+                    ipaddress.IPv4Address(red_txt), ipaddress.IPv4Address(difusion) + 1))
             if len(bloques) == 1:
                 por_rango = bloques[0]
             else:
@@ -479,6 +484,9 @@ def _interpretar(numero, cuerpo, avisos, base=None):
     if red is None:
         avisos.append("VLAN %d: falta la máscara o la diagonal" % numero)
         return None
+    if tamano is not None and prefijo is None and tamano != red.prefixlen:
+        avisos.append("VLAN %d: la nota dice /%d, pero tu rango y tu máscara son de /%d"
+                      % (numero, tamano, red.prefixlen))
     if por_mascara is not None and por_mascara != red:
         avisos.append("VLAN %d: la máscara %s no cuadra con %s; se usó /%d"
                       % (numero, mascara, red, red.prefixlen))
@@ -693,11 +701,12 @@ def leer(raiz, topo) -> Plan:
                     sitio.bloque, sitio.inicio = bloque, inicio
         plan.notas += util
 
-    # Routers primero y luego cores, cada grupo por nombre (R2 antes que R10):
-    # en ese orden se reparten las redes base que comparten varios sitios.
+    _bajar_al_multicapa(sitios, topo, equipos, ady, anota)
+    # Routers primero y luego cores, cada grupo por nombre (R2 antes que R10). El
+    # sitio que cuelga de un router va con el nombre que dice su nota.
     plan.sitios = sorted(sitios.values(),
-                         key=lambda s: (s.dueno.es_multicapa,
-                                        _natural(s.dueno.hostname or s.dueno.nombre)))
+                         key=lambda s: (s.dueno.es_multicapa and not s.rotulo,
+                                        _natural(s.rotulo or s.dueno.hostname or s.dueno.nombre)))
     if not plan.sitios:
         return plan
     # Primero quién está en cada sitio (switches y PCs): de ahí salen las VLANs
@@ -714,6 +723,42 @@ def leer(raiz, topo) -> Plan:
 
 def _natural(texto):
     return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", texto)]
+
+
+def _visto(d) -> str:
+    """Como se le conoce: su hostname, o el nombre del lienzo si es el de fábrica."""
+    return d.hostname if d.hostname and d.hostname.lower() not in ("router", "switch") \
+        else d.nombre
+
+
+def _con_lan(nombre, equipos, ady) -> bool:
+    return any(equipos[v].es_switch or equipos[v].es_host for v, _, _ in ady.get(nombre, ()))
+
+
+def _bajar_al_multicapa(sitios, topo, equipos, ady, anota):
+    """La nota a nombre de un router sin LAN propia habla de lo que cuelga de él:
+    'R3' y 'SWR2' son el mismo sitio si la red de PCs está en el multicapa pegado a R3."""
+    for nombre, sitio in list(sitios.items()):
+        dueno = sitio.dueno
+        if dueno.es_multicapa or _con_lan(nombre, equipos, ady):
+            continue
+        abajo = {}
+        for e in topo.enlaces:
+            otro = e.b_dispositivo if e.a_dispositivo == nombre else \
+                e.a_dispositivo if e.b_dispositivo == nombre else None
+            d = equipos.get(otro)
+            if d is not None and d.es_multicapa and d.nombre not in sitios \
+                    and _con_lan(d.nombre, equipos, ady):
+                abajo[d.nombre] = d
+        if len(abajo) != 1:
+            continue
+        d = next(iter(abajo.values()))
+        del sitios[nombre]
+        sitio.dueno, sitio.como = d, "sin LAN"
+        sitio.rotulo = _visto(dueno)
+        sitios[d.nombre] = sitio
+        anota(INFO, d.nombre, "la nota de %s se aplicó a %s: %s no tiene LAN propia"
+              % (sitio.rotulo, _visto(d), sitio.rotulo))
 
 
 def redes_de_notas(topo):
@@ -735,15 +780,133 @@ def redes_de_notas(topo):
     return vlans, bases
 
 
+# En qué orden salen las redes de una misma base. A mano se hace una tabla por VLAN,
+# tachando los bloques que chocan con lo ya repartido, así que el orden lo cambia todo.
+# Se usa el que más coincide con lo que ya está configurado y, si no hay nada, el primero:
+# de la más chica a la más grande, y en cada tabla por número de router, con el multicapa
+# en el lugar del router del que cuelga. Con usuarios en vez de diagonales, VLSM clásico.
+_REPARTOS = (
+    ("chica", "router", "de la más chica a la más grande, VLAN por VLAN y por número de router"),
+    ("chica", "dueno", "de la más chica a la más grande, VLAN por VLAN, routers antes que multicapa"),
+    ("grande", "dueno", "de la más grande a la más chica, VLAN por VLAN, routers antes que multicapa"),
+    ("numero", "dueno", "por número de VLAN, routers antes que multicapa"),
+    ("grande", "router", "de la más grande a la más chica, VLAN por VLAN y por número de router"),
+    ("numero", "router", "por número de VLAN y de router"),
+    ("sitio", "dueno", "sitio por sitio, routers antes que multicapa"),
+)
+
+
+def _rango_por_router(sitio, topo):
+    """El lugar del sitio en la tabla: el router que lo atiende, y el multicapa
+    después de él."""
+    dueno = sitio.dueno
+    if not dueno.es_multicapa:
+        return (0, _natural(_visto(dueno)), 0, [])
+    routers = []
+    for e in topo.enlaces:
+        otro = e.b_dispositivo if e.a_dispositivo == dueno.nombre else \
+            e.a_dispositivo if e.b_dispositivo == dueno.nombre else None
+        d = topo.por_nombre(otro) if otro else None
+        if d is not None and d.es_ruteador and not d.es_multicapa:
+            routers.append(_natural(_visto(d)))
+    propio = _natural(_visto(dueno))
+    if not routers:
+        return (1, propio, 1, propio)
+    return (0, min(routers), 1, propio)
+
+
+def _asignar_redes(trabajos, ocupadas_base, criterio):
+    """[(redes, modo, aviso)] por trabajo, en el orden de `criterio`, sin tocar
+    `ocupadas_base`."""
+    orden, lugar, texto = criterio
+    ocupadas = list(ocupadas_base)
+
+    def por_partes(sitio, pedidas):
+        redes, modo, aviso = _dividir(sitio.bloque, sitio.inicio, pedidas, ocupadas)
+        ocupadas.extend(r for r in redes if r is not None)
+        return redes, modo, aviso
+
+    if orden == "sitio":
+        return [por_partes(s, p) for s, p, _ in trabajos]
+
+    peticiones = []
+    salida = []
+    for k, (sitio, pedidas, rango) in enumerate(trabajos):
+        salida.append(([None] * len(pedidas), None, None))
+        for i, p in enumerate(pedidas):
+            if p.tamano and p.tamano >= sitio.bloque.prefixlen:
+                peticiones.append((k, i, p, sitio, rango))
+
+    def clave(q):
+        k, _, p, _, rango = q
+        donde = rango if lugar == "router" else (k,)
+        if orden == "chica":
+            return (-p.tamano, p.numero, donde)
+        if orden == "grande":
+            return (p.tamano, p.numero, donde)
+        return (p.numero, donde)
+
+    for k, i, p, sitio, _ in sorted(peticiones, key=clave):
+        for red in _candidatas(sitio.bloque, sitio.inicio, p.tamano):
+            if not any(red.overlaps(o) for o in ocupadas):
+                salida[k][0][i] = red
+                ocupadas.append(red)
+                break
+    for k, (sitio, pedidas, _) in enumerate(trabajos):
+        if any(p.tamano for p in pedidas):
+            salida[k] = (salida[k][0], _modo_por_tamano(pedidas) + ", " + texto, None)
+        else:
+            salida[k] = por_partes(sitio, pedidas)
+    return salida
+
+
+def _red_configurada(sitio, numero):
+    """La red que esta VLAN ya tiene en su SVI o subinterfaz, o None."""
+    if sitio.dueno.es_multicapa:
+        nombre = "Vlan%d" % numero
+    elif sitio.puerto_lan:
+        nombre = "%s.%d" % (sitio.puerto_lan, numero)
+    else:
+        return None
+    ic = _config(sitio.dueno, nombre)
+    if ic is None or not ic.ip or not ic.mascara:
+        return None
+    try:
+        return ipaddress.IPv4Interface("%s/%s" % (ic.ip, ic.mascara)).network
+    except ValueError:
+        return None
+
+
+def _elegir_reparto(trabajos, ocupadas, anota):
+    por_usuarios = any(p.usuarios and p.prefijo is None
+                       for _, pedidas, _ in trabajos for p in pedidas)
+    candidatos = (_REPARTOS[-1],) + _REPARTOS if por_usuarios else _REPARTOS
+    mejor, puntos, elegido = None, -1, None
+    for criterio in candidatos:
+        intento = _asignar_redes(trabajos, ocupadas, criterio)
+        n = 0
+        for (sitio, pedidas, _), (redes, _, _) in zip(trabajos, intento):
+            for p, red in zip(pedidas, redes):
+                if red is not None and _red_configurada(sitio, p.numero) == red:
+                    n += 1
+        if n > puntos:
+            mejor, puntos, elegido = intento, n, criterio
+    if any(p.tamano for _, pedidas, _ in trabajos for p in pedidas):
+        if not puntos and not por_usuarios:
+            anota(INFO, "plan", "las redes salieron " + elegido[2])
+        elif puntos and elegido is not _REPARTOS[0]:
+            anota(INFO, "plan", "tus redes ya van " + elegido[2] + ": se respetó ese orden")
+    return mejor
+
+
 def _repartir(plan, topo, anota):
     """Las VLANs que no traen red salen de la red base de su sitio: del tamaño
-    que diga su diagonal o su número de usuarios (VLSM, la más grande primero),
-    o en partes iguales si la nota no dice tamaños. Si el sitio sólo trae la
-    red base, sus VLANs son las de sus PCs.
+    que diga su diagonal o su número de usuarios, o en partes iguales si la nota
+    no dice tamaños. Si el sitio sólo trae la red base, sus VLANs son las de sus PCs.
 
-    Cada VLAN toma el primer bloque libre desde el inicio de la red base, así
-    que varios sitios con la misma base ('R1 16.0.0.0', 'R2 16.0.0.0') quedan
-    uno tras otro, sin encimarse con los enlaces ni entre sí."""
+    Cada VLAN toma el primer bloque libre desde el inicio de la red base, sin
+    encimarse con los enlaces ni con otra red. Varios sitios pueden compartir la
+    base ('R1 16.0.0.0', 'R2 16.0.0.0'): el orden sale de _REPARTOS."""
     # Lo que ya usa la práctica y no se puede pisar. Las SVI y subinterfaces
     # de los dueños no cuentan: esas las vuelve a armar el plan.
     duenos = {s.dueno.nombre for s in plan.sitios}
@@ -757,6 +920,7 @@ def _repartir(plan, topo, anota):
                 ocupadas.append(ipaddress.IPv4Interface("%s/%s" % (i.ip, i.mascara)).network)
             except ValueError:
                 continue
+    trabajos = []
     for sitio in plan.sitios:
         dueno = sitio.dueno.nombre
         ya = {v.numero for v in sitio.vlans}
@@ -785,9 +949,12 @@ def _repartir(plan, topo, anota):
                       "escríbelas en la nota ('VLAN 3/24')"
                       % (sitio.inicio or sitio.bloque))
             continue
+        trabajos.append((sitio, pedidas, _rango_por_router(sitio, topo)))
 
-        redes, sitio.reparto, aviso = _dividir(sitio.bloque, sitio.inicio, pedidas,
-                                               ocupadas)
+    reparto = _elegir_reparto(trabajos, ocupadas, anota)
+    for (sitio, pedidas, _), (redes, modo, aviso) in zip(trabajos, reparto):
+        dueno = sitio.dueno.nombre
+        sitio.reparto = modo
         if aviso:
             anota(AVISO, dueno, aviso)
         con_tamano = any(p.tamano for p in pedidas)
@@ -810,7 +977,13 @@ def _repartir(plan, topo, anota):
             _agregar_vlan(sitio, VlanPlan(pedida.numero, red,
                                           pedida.nombre or nombre_por_omision(pedida.numero),
                                           str(red.broadcast_address - 1)), anota)
-            ocupadas.append(red)
+
+
+def _modo_por_tamano(pedidas) -> str:
+    por_usuarios = any(p.usuarios and p.prefijo is None for p in pedidas)
+    por_diagonal = any(p.prefijo is not None for p in pedidas)
+    return "por diagonal y usuarios" if por_usuarios and por_diagonal else \
+        "por usuarios" if por_usuarios else "por diagonal"
 
 
 def _candidatas(bloque, inicio, prefijo):
@@ -848,11 +1021,7 @@ def _dividir(bloque, inicio, pedidas, ocupadas):
                     redes[i] = red
                     tomadas.append(red)
                     break
-        por_usuarios = any(p.usuarios and p.prefijo is None for p in pedidas)
-        por_diagonal = any(p.prefijo is not None for p in pedidas)
-        modo = "por diagonal y usuarios" if por_usuarios and por_diagonal else \
-            "por usuarios" if por_usuarios else "por diagonal"
-        return redes, modo + ", de la más grande a la más chica", None
+        return redes, _modo_por_tamano(pedidas) + ", de la más grande a la más chica", None
 
     orden = sorted(range(len(pedidas)), key=lambda i: pedidas[i].numero)
     inicial = bloque.prefixlen + (len(pedidas) - 1).bit_length()
@@ -1090,12 +1259,19 @@ def _vlans_bd(disp, vlans) -> list:
                   (v.numero, v.nombre.lower()) in existentes) for v in vlans if v.numero != 1]
 
 
+def _pide_encapsulacion(disp) -> bool:
+    """Un 3560 no deja poner una troncal sin decirle la encapsulación, aunque ahí
+    sólo haga de switch; un 3650 sólo conoce dot1Q y esa línea se la rechaza."""
+    d = disp._descripcion
+    return ("multilayer" in d or "3560" in d or "3750" in d) and "3650" not in d
+
+
 def _troncal(disp, puerto):
     ic = _config(disp, puerto)
     if disp.es_multicapa and ic is not None and ic.ruteado:
         return None                    # puerto ruteado: no puede ser troncal
     lineas = ["interface %s" % puerto]
-    if disp.es_multicapa:
+    if _pide_encapsulacion(disp):
         lineas.append(" switchport trunk encapsulation dot1q")
     lineas.append(" switchport mode trunk")
     return Orden("troncal", lineas, bool(ic and ic.modo == "trunk"))
@@ -1103,7 +1279,7 @@ def _troncal(disp, puerto):
 
 def _canal(disp, puertos, grupo, modo) -> Orden:
     lineas = [_cabecera(puertos)]
-    if disp.es_multicapa:
+    if _pide_encapsulacion(disp):
         lineas.append(" switchport trunk encapsulation dot1q")
     lineas += [" switchport mode trunk", " channel-group %d mode %s" % (grupo, modo)]
     presente = all((ic := _config(disp, p)) is not None and ic.canal for p in puertos)
@@ -1189,12 +1365,9 @@ def _cables_del_sitio(sitio, equipos, cables):
 def _ordenes_de_switch(disp, sitio, troncales, incluir_vlans=True) -> list:
     ordenes = _vlans_bd(disp, sitio.vlans) if incluir_vlans else []
     if sitio.raiz == disp.nombre:
-        numeros = sorted({1} | {v.numero for v in sitio.vlans})
-        lista = ",".join(str(n) for n in numeros)
-        presente = bool(disp.cfg) and all(
-            disp.cfg.stp.get(n, 32768) <= PRIORIDAD_RAIZ for n in numeros)
-        ordenes.append(Orden("stp", ["spanning-tree vlan %s priority %d"
-                                     % (lista, PRIORIDAD_RAIZ)], presente))
+        presente = bool(disp.cfg) and disp.cfg.stp.get(1, 32768) <= PRIORIDAD_RAIZ
+        ordenes.append(Orden("stp", ["spanning-tree vlan 1 priority %d" % PRIORIDAD_RAIZ],
+                             presente))
     for puerto in sorted(troncales.get(disp.nombre, [])):
         orden = _troncal(disp, puerto)
         if orden is not None:

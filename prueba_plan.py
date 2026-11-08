@@ -220,7 +220,7 @@ def prueba_topologia():
         assert esperado in r2, "falta en r2: %r\n%s" % (esperado, r2)
 
     sw0 = _texto_de(bloques, "Switch0")
-    for esperado in ("spanning-tree vlan 1,3,4 priority 4096",
+    for esperado in ("spanning-tree vlan 1 priority 4096",
                      "interface FastEthernet0/1\n switchport mode trunk",
                      "interface range FastEthernet0/2 - 4\n switchport mode trunk\n"
                      " channel-group 1 mode active",
@@ -398,6 +398,132 @@ def prueba_base_con_diagonales():
     print("[ok] la VLAN que no trae tamaño cuando las demás sí, se marca")
 
 
+R4T = ["hostname Router", "interface FastEthernet0/0", " shutdown",
+       "interface FastEthernet0/1", " shutdown", "interface Ethernet0/0/0", " shutdown"]
+M4T = ["hostname Switch", "interface FastEthernet0/1", "interface FastEthernet0/2"]
+
+
+def _cuatro_routers(notas, enlaces=(".4", ".8", ".12", ".16", ".20"), cfg=None):
+    """R1 - R2 - R3 - R4, con SWR1 colgando de R1 y SWR2 de R3, como en P4_P3."""
+    cfg = cfg or {}
+    _REF.clear()
+    raiz = ET.Element("PACKETTRACER5")
+    red = ET.SubElement(raiz, "NETWORK")
+    equipos = ET.SubElement(red, "DEVICES")
+    lugares = {"R1": (100, 100), "R2": (1000, 100), "R3": (2000, 100), "R4": (3000, 100),
+               "SWR1": (100, 1000), "SWR2": (2000, 1000), "S1": (100, 1500), "S2": (1000, 600),
+               "S3": (2000, 1500), "S4": (3000, 600)}
+    for n in ("R1", "R2", "R3", "R4"):
+        _equipo(equipos, n, "Router", "2811", *lugares[n], cfg.get(n, R4T))
+    for n in ("SWR1", "SWR2"):
+        _equipo(equipos, n, "MultiLayerSwitch", "3560-24PS", *lugares[n], cfg.get(n, M4T), vlans=True)
+    for n in ("S1", "S2", "S3", "S4"):
+        _equipo(equipos, n, "Switch", "2960-24TT", *lugares[n], ["hostname Switch"], vlans=True)
+    cables = ET.SubElement(red, "LINKS")
+    for a, pa, b, pb in (("R1", "FastEthernet0/0", "R2", "FastEthernet0/0"),
+                         ("R2", "FastEthernet0/1", "R3", "FastEthernet0/0"),
+                         ("R3", "FastEthernet0/1", "R4", "FastEthernet0/0"),
+                         ("R1", "Ethernet0/0/0", "SWR1", "FastEthernet0/1"),
+                         ("R3", "Ethernet0/0/0", "SWR2", "FastEthernet0/1"),
+                         ("SWR1", "FastEthernet0/2", "S1", "FastEthernet0/1"),
+                         ("R2", "Ethernet0/0/0", "S2", "FastEthernet0/1"),
+                         ("SWR2", "FastEthernet0/2", "S3", "FastEthernet0/1"),
+                         ("R4", "FastEthernet0/1", "S4", "FastEthernet0/1")):
+        _cable(cables, a, pa, b, pb)
+    contenedor = ET.SubElement(ET.SubElement(raiz, "PHYSICALWORKSPACE"), "NOTES")
+    medios = ((550, 100), (1500, 100), (2500, 100), (100, 550), (2000, 550))
+    for (x, y), texto in list(zip(medios, enlaces)) + [((500 + 300 * i, 3000), t) for i, t in enumerate(notas)]:
+        nota = ET.SubElement(contenedor, "NOTE")
+        ET.SubElement(nota, "X").text = str(x)
+        ET.SubElement(nota, "Y").text = str(y)
+        ET.SubElement(nota, "TEXT").text = texto
+    return ET.tostring(raiz)
+
+
+def _redes(topo, sitio):
+    s = next(x for x in topo.plan.sitios if (x.rotulo or x.dueno.hostname) == sitio)
+    return [(v.numero, str(v.red)) for v in s.vlans]
+
+
+def _reportado(topo):
+    subredes = analisis.construir_subredes(topo)
+    rutas, _ = analisis.calcular_rutas(topo, subredes)
+    return analisis.revisar(topo, subredes, rutas), rutas
+
+
+def prueba_orden_de_reparto():
+    """Como en las hojas de P4_P3: una tabla por VLAN, de la más chica a la más
+    grande, tachando lo que choca; el multicapa va en el lugar de su router."""
+    topo = leer_topologia(_cuatro_routers([
+        "R2 16.0.0.0\nVLAN 2/17\nVLAN 3/22\nVLAN 4/24",
+        "R3 16.0.0.0\nVLAN 2/17\nVLAN 3/22\nVLAN 4/24\nVLAN 5/15",
+        "R4 16.0.0.0\nVLAN 3/22\nVLAN 4/24\nVLAN 5/15",
+        "SWR1 16.0.0.0\nVLAN 3/22"]))
+    assert _redes(topo, "SWR1") == [(3, "16.0.4.0/22")], _redes(topo, "SWR1")
+    assert _redes(topo, "R2") == [(2, "16.0.128.0/17"), (3, "16.0.8.0/22"), (4, "16.0.1.0/24")]
+    assert _redes(topo, "R3") == [(2, "16.1.0.0/17"), (3, "16.0.12.0/22"), (4, "16.0.2.0/24"),
+                                  (5, "16.2.0.0/15")], _redes(topo, "R3")
+    assert _redes(topo, "R4") == [(3, "16.0.16.0/22"), (4, "16.0.3.0/24"), (5, "16.4.0.0/15")]
+    hallazgos, _ = _reportado(topo)
+    assert any("las redes salieron de la más chica" in h.mensaje for h in topo.plan.hallazgos), topo.plan.hallazgos
+    print("[ok] sin nada escrito, las redes salen VLAN por VLAN, de la más chica a la más grande")
+
+    # Lo ya configurado manda: con esta V2 en 16.0.1.0 sólo cuadra de grande a chica.
+    r2 = ["hostname R2", "interface FastEthernet0/0", " no ip address", "interface FastEthernet0/1",
+          " no ip address", "interface Ethernet0/0/0", " no ip address", "interface Ethernet0/0/0.2",
+          " encapsulation dot1Q 2", " ip address 16.0.1.254 255.255.255.0"]
+    topo = leer_topologia(_cuatro_routers(["R2 16.0.0.0\nVLAN 2/24\nVLAN 3/25", "R4 16.0.0.0\nVLAN 3/25"], cfg={"R2": r2}))
+    assert _redes(topo, "R2") == [(2, "16.0.1.0/24"), (3, "16.0.0.128/25")], _redes(topo, "R2")
+    assert _redes(topo, "R4") == [(3, "16.0.2.0/25")], _redes(topo, "R4")
+    assert any("tus redes ya van de la más grande" in h.mensaje for h in topo.plan.hallazgos), topo.plan.hallazgos
+    print("[ok] lo que ya está configurado manda sobre el orden")
+
+
+def prueba_nota_de_router_sin_lan():
+    """El formato de P4_P3: sin red base, con el rango hasta la última utilizable, y
+    una nota a nombre de un router cuya LAN cuelga del multicapa."""
+    topo = leer_topologia(_cuatro_routers([
+        "R3\nVLAN 2/17\n 16.1.0.0 - 16.1.127.254 - 255.255.128.0\nVLAN 5/16\n 16.2.0.0 - 16.3.255.254 - 255.254.0.0",
+        "R2\nVLAN 4/24\n 16.0.1.0 - 16.0.1.254 - 255.255.255.0"]))
+    s = next(x for x in topo.plan.sitios if x.rotulo == "R3")
+    assert s.dueno.nombre == "SWR2", s.dueno.nombre
+    assert _redes(topo, "R3") == [(2, "16.1.0.0/17"), (5, "16.2.0.0/15")], _redes(topo, "R3")
+    mensajes = [h.mensaje for h in topo.plan.hallazgos]
+    assert "la nota de R3 se aplicó a SWR2: R3 no tiene LAN propia" in mensajes[0:] or \
+        any("se aplicó a SWR2" in m for m in mensajes), mensajes
+    assert not any("subred exacta" in m for m in mensajes), mensajes
+    assert any("VLAN 5: la nota dice /16, pero tu rango y tu máscara son de /15" in m for m in mensajes), mensajes
+    hallazgos, rutas = _reportado(topo)
+    assert not any("no se sabe en qué red" in h for h in hallazgos_de(hallazgos, "AVISO")), hallazgos_de(hallazgos, "AVISO")
+    bloques = reporte.bloques_por_equipo(topo, rutas)
+    swr2 = _texto_de(bloques, "SWR2")
+    assert "interface Vlan2\n ip address 16.1.127.254 255.255.128.0" in swr2, swr2
+    assert "interface FastEthernet0/1\n no switchport\n ip address 16.0.0.22" in swr2, swr2
+    print("[ok] la nota de un router sin LAN va en su multicapa, y los enlaces salen de sus redes")
+
+    # Si el multicapa ya tiene su nota, la de R3 sí es un error que hay que decir.
+    topo = leer_topologia(_cuatro_routers(["R3 16.0.0.0\nVLAN 2/24", "SWR2 16.0.0.0\nVLAN 9/24"]))
+    assert any("no tiene ningún switch cableado" in h.mensaje for h in topo.plan.hallazgos), topo.plan.hallazgos
+    print("[ok] si el multicapa ya tiene nota, la del router se marca")
+
+
+def prueba_combo_olvidado():
+    """Un combo olvidado se agrega contando desde el último. Aquí los combos se toman
+    tal cual, así que no recorre a los demás; revisarlo le toca al módulo."""
+    topo = leer_topologia(_cuatro_routers([
+        "R2\nVLAN 3/22\n 16.0.8.0 - 16.0.11.254 - 255.255.252.0\nVLAN 4/24\n 16.0.1.0 - 16.0.1.254 - 255.255.255.0",
+        "R4\nVLAN 3/22\n 16.0.12.0 - 16.0.15.254 - 255.255.252.0\nVLAN 4/24\n 16.0.2.0 - 16.0.2.254 - 255.255.255.0",
+        "SWR1\nVLAN 3/22\n 16.0.4.0 - 16.0.7.254 - 255.255.252.0\nVLAN 4/24\n 16.0.16.0 - 16.0.16.254 - 255.255.255.0\n"
+        "VLAN 6/28\n 16.0.17.0 - 16.0.17.14 - 255.255.255.240"]))
+    assert _redes(topo, "SWR1") == [(3, "16.0.4.0/22"), (4, "16.0.16.0/24"), (6, "16.0.17.0/28")], _redes(topo, "SWR1")
+    assert _redes(topo, "R2") == [(3, "16.0.8.0/22"), (4, "16.0.1.0/24")], _redes(topo, "R2")
+    assert _redes(topo, "R4") == [(3, "16.0.12.0/22"), (4, "16.0.2.0/24")], _redes(topo, "R4")
+    assert not hallazgos_de(topo.plan.hallazgos, "ERROR"), hallazgos_de(topo.plan.hallazgos, "ERROR")
+    _, rutas = _reportado(topo)
+    assert "ip address 16.0.17.14 255.255.255.240" in _texto_de(reporte.bloques_por_equipo(topo, rutas), "SWR1")
+    print("[ok] un combo olvidado se queda donde lo escribiste y no recorre a los demás")
+
+
 def prueba_sin_notas():
     topo = leer_topologia(construir([]))
     assert topo.plan.vacio
@@ -416,6 +542,9 @@ def main():
     prueba_svi_en_router()
     prueba_red_base()
     prueba_base_con_diagonales()
+    prueba_orden_de_reparto()
+    prueba_nota_de_router_sin_lan()
+    prueba_combo_olvidado()
     prueba_sin_notas()
     return 0
 

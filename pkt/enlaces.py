@@ -212,11 +212,31 @@ def _etiquetar(cables, notas) -> dict:
     return asignadas
 
 
-def _base_enlaces(cables, bases, notas):
+def _base_de_vlans(vlans):
+    """Sin base escrita, la de la mayoría de tus redes: 16.0.4.0 -> 16.0.0; en clase
+    C, sin cambiar sus tres primeros octetos."""
+    octetos = [str(v.red.network_address).split(".") for v, _ in vlans]
+    if not octetos:
+        return None
+
+    def mas_comun(valores):
+        # En un empate, el menor: los enlaces van al principio de la red.
+        return Counter(sorted(valores, key=int)).most_common(1)[0][0]
+
+    primero = mas_comun(o[0] for o in octetos)
+    octetos = [o for o in octetos if o[0] == primero]
+    segundo = mas_comun(o[1] for o in octetos)
+    if int(primero) < 192:
+        return "%s.%s.0" % (primero, segundo)
+    octetos = [o for o in octetos if o[1] == segundo]
+    return "%s.%s.%s" % (primero, segundo, mas_comun(o[2] for o in octetos))
+
+
+def _base_enlaces(cables, bases, notas, vlans=()):
     """Los tres primeros octetos de tus enlaces: los de los que ya tienen IP;
     en una práctica en blanco, los de las notas de enlace que traen la
-    dirección completa ('12.0.0.4'), y si ninguna la trae, los de la red base
-    de las notas de VLAN."""
+    dirección completa ('12.0.0.4'), si ninguna la trae, los de la red base
+    de las notas de VLAN, y si tampoco hay base, los de tus redes de VLAN."""
     cuenta = Counter()
     for _, ia, _, ib in cables:
         for i in (ia, ib):
@@ -227,7 +247,7 @@ def _base_enlaces(cables, bases, notas):
         cuenta = Counter(n.prefijo for n in notas if n.prefijo)
     if not cuenta:
         cuenta = Counter(str(b).rsplit(".", 1)[0] for b in bases)
-    return cuenta.most_common(1)[0][0] if cuenta else None
+    return cuenta.most_common(1)[0][0] if cuenta else _base_de_vlans(vlans)
 
 
 def _red_de_nota(nota, base):
@@ -439,18 +459,25 @@ def _sin_ip(topo, c, vis, vlans, cable, nota, base, reservadas):
             "enlaces: escribe la dirección completa en una de sus notas ('12.0.0.4') "
             "o agrega las notas de VLAN con su red base" % (texto, nota.texto)))
         return
+    pedida = None
     if nota is not None and red is None:
         c.hallazgos.append(Hallazgo(AVISO, "red",
             "la nota '%s' junto al cable %s no es una dirección válida: se eligió "
             "otro /30" % (nota.texto, texto)))
     elif red is not None and any(red.overlaps(o) for o in _ocupadas(topo, vlans)):
-        c.hallazgos.append(Hallazgo(AVISO, "red",
-            "la nota '%s' junto al cable %s pide %s, que ya está ocupada: se eligió "
-            "otro" % (nota.texto, texto, red)))
-        red = None
+        pedida, red = red, None
     de_nota = red is not None
     if red is None:
         red = _siguiente_30(topo, vlans, base, reservadas)
+    if pedida is not None:
+        dentro = sorted({vis[d.nombre] for d in topo.dispositivos for i in d.interfaces_ip
+                         if _red(i) is not None and ipaddress.IPv4Address(i.ip) in pedida})
+        de_quien = "que ya %s %s" % ("usan" if len(dentro) > 1 else "usa", " y ".join(dentro)) \
+            if dentro else "que ya está ocupada"
+        c.hallazgos.append(Hallazgo(AVISO, "red",
+            "la nota '%s' junto al cable %s cae en %s, %s%s"
+            % (nota.texto, texto, pedida, de_quien,
+               ": se eligió %s" % red if red is not None else "")))
     if red is None:
         c.hallazgos.append(Hallazgo(AVISO, "red",
             "el cable %s no tiene IP en ningún lado y no hay de dónde tomar la "
@@ -525,7 +552,7 @@ def corregir(topo) -> Correcciones:
     vlans, bases = redes_de_notas(topo)
     comun = _mascara_comun(cables)
     etiquetas = _etiquetar(cables, _notas_de_enlace(topo))
-    base = _base_enlaces(cables, bases, etiquetas.values())
+    base = _base_enlaces(cables, bases, etiquetas.values(), vlans)
     if not _notas_confiables(cables, etiquetas, base):
         etiquetas = {}
 
@@ -542,6 +569,8 @@ def corregir(topo) -> Correcciones:
     # Los /30 que las notas apartan no se le dan a otro cable.
     reservadas = {red for j in vacios if j in etiquetas
                   and (red := _red_de_nota(etiquetas[j], base)) is not None}
+    # Las notas que dicen justo el inicio de su bloque van antes: '.44' le gana a '.47'.
+    vacios.sort(key=lambda j: j in etiquetas and etiquetas[j].octeto % 4 != 0)
     for j in vacios:
         _sin_ip(topo, c, vis, vlans, cables[j], etiquetas.get(j), base, reservadas)
     _apagadas(topo, c)
