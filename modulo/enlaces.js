@@ -292,13 +292,16 @@ function _siguiente30(topo, vlans, base, reservadas) {
     return null;
 }
 
+function _textoCable(vis, t) { return vis[t[0].nombre] + " " + t[1].nombre + " - " + vis[t[2].nombre] + " " + t[3].nombre; }
+
 // Un cable sin IP y sin una nota que se pueda cumplir. `pedida`: la red de su nota, si otra nota ya
-// la tomó. Las que sí se pueden cumplir ya se aplicaron.
-function _sinIp(topo, c, vis, vlans, cable, nota, pedida, base, reservadas) {
+// la tomó. Las que sí se pueden cumplir ya se aplicaron. Si la tomó otra nota (`repetida`), eso se
+// avisa al final, con las dos notas.
+function _sinIp(topo, c, vis, vlans, cable, nota, pedida, base, reservadas, repetida) {
     var a = cable[0], ia = cable[1], b = cable[2], ib = cable[3];
     if ((a.esMulticapa && b.esMulticapa && !nota) || _para_lan(a, ia) || _para_lan(b, ib)) { return; }
     c.revisados[_clave(a.nombre, ia.nombre, b.nombre, ib.nombre)] = true;
-    var texto = vis[a.nombre] + " " + ia.nombre + " - " + vis[b.nombre] + " " + ib.nombre;
+    var texto = _textoCable(vis, cable);
     if (nota && pedida === null && nota.octeto <= 255 && base === null) {
         c.avisos.push("el cable " + texto + " tiene la nota '" + nota.texto + "', pero no se sabe en qué red van tus enlaces");
         return;
@@ -307,7 +310,7 @@ function _sinIp(topo, c, vis, vlans, cable, nota, pedida, base, reservadas) {
         c.avisos.push("la nota '" + nota.texto + "' junto al cable " + texto + " no es una dirección válida: se eligió otro /30");
     }
     var red = _siguiente30(topo, vlans, base, reservadas);
-    if (pedida !== null) {
+    if (pedida !== null && !repetida) {
         var dentro = _dentroDe(topo, pedida, []);
         var deQuien = dentro.length ? ", que ya " + (dentro.length > 1 ? "usan " : "usa ") + _listaVis(vis, dentro) : ", que ya está ocupada";
         c.avisos.push("la nota '" + nota.texto + "' junto al cable " + texto + " cae en " + textoRed(pedida) + deQuien
@@ -324,10 +327,10 @@ function _sinIp(topo, c, vis, vlans, cable, nota, pedida, base, reservadas) {
     _aplicarEnlace(c, b, ib, enteroAIp(red.n + 2), mascaraDe(30));
 }
 
-function _revisarNotas(c, vis, cables, etiquetas, base) {
+function _revisarNotas(c, vis, cables, etiquetas, base, repetidas) {
     Object.keys(etiquetas).map(Number).sort(function (x, y) { return x - y; }).forEach(function (j) {
         var t = cables[j], nota = etiquetas[j];
-        if (c.revisados[_clave(t[0].nombre, t[1].nombre, t[2].nombre, t[3].nombre)]) { return; }
+        if (repetidas[j] !== undefined || c.revisados[_clave(t[0].nombre, t[1].nombre, t[2].nombre, t[3].nombre)]) { return; }
         if (!t[1].configurada || !t[3].configurada) { return; }
         var red = _redIfaz(t[1]), rb = _redIfaz(t[3]);
         if (!red || !rb || !mismaRed(red, rb)) { return; }
@@ -338,6 +341,19 @@ function _revisarNotas(c, vis, cables, etiquetas, base) {
         } else if (!mismaRed(esperada, red)) {
             c.avisos.push("la nota '" + nota.texto + "' junto al enlace " + texto + " dice " + textoRed(esperada) + ", pero el enlace tiene " + textoRed(red));
         }
+    });
+}
+
+// Dos notas que piden el mismo /30 ('.52' en dos cables): una de las dos está mal. Se queda con él la
+// que va antes en `conNota`, y se dice en qué red quedó el cable de la otra.
+function _avisarRepetidas(c, vis, cables, etiquetas, repetidas, pedidas) {
+    Object.keys(repetidas).map(Number).sort(function (x, y) { return x - y; }).forEach(function (j) {
+        var t = cables[j], k = repetidas[j];
+        var ra = t[1].configurada ? _redIfaz(t[1]) : null, rb = t[3].configurada ? _redIfaz(t[3]) : null;
+        var queda = ra && rb && mismaRed(ra, rb) && !traslapan(ra, pedidas[j]);
+        c.avisos.push("la nota '" + etiquetas[j].texto + "' junto al cable " + _textoCable(vis, t) + " repite la red de la nota '"
+                      + etiquetas[k].texto + "' junto al cable " + _textoCable(vis, cables[k]) + " (" + textoRed(pedidas[j]) + ")"
+                      + (queda ? ": a " + vis[t[0].nombre] + " - " + vis[t[2].nombre] + " le toca " + textoRed(ra) + " hasta que corrijas una" : ": corrige una"));
     });
 }
 
@@ -404,17 +420,24 @@ function corregirEnlaces(topo, res) {
 
     // Primero las notas, y lo configurado no les estorba: lo que esté en su red se borra después.
     // Sólo otra nota puede ganarle a una. Las que dicen justo el inicio de su bloque van antes:
-    // '.44' le gana a '.47'.
-    var tomadas = rn.vlans.map(function (v) { return v[0].red; }), pedidas = {};
-    var conNota = ordenar(Object.keys(etiquetas).map(Number), function (j) { return [etiquetas[j].octeto % 4 !== 0 ? 1 : 0, j]; });
+    // '.44' le gana a '.47'; entre dos iguales, la del cable que ya está hecho como dice. `repetidas`:
+    // el cable cuya nota pide la red de otra nota, con el de esa.
+    var tomadas = rn.vlans.map(function (v) { return v[0].red; }), pedidas = {}, deNotas = [], repetidas = {};
+    var conNota = ordenar(Object.keys(etiquetas).map(Number), function (j) {
+        var nota = etiquetas[j], faltan = (_ladoCuadra(cables[j][1], nota) ? 0 : 1) + (_ladoCuadra(cables[j][3], nota) ? 0 : 1);
+        return [nota.octeto % 4 !== 0 ? 1 : 0, faltan, j];
+    });
     conNota.forEach(function (j) {
         var red = _redDeNota(etiquetas[j], base);
         if (red === null) { return; }
+        var otra = deNotas.filter(function (x) { return traslapan(red, x.red); })[0];
+        if (otra) { repetidas[j] = otra.j; }
         if (tomadas.some(function (o) { return traslapan(red, o); })) {
             pedidas[j] = red;
             return;
         }
         tomadas.push(red);
+        deNotas.push({ red: red, j: j });
         _conNota(c, cables[j], red);
     });
     function cumplida(t) { return c.revisados[_clave(t[0].nombre, t[1].nombre, t[2].nombre, t[3].nombre)]; }
@@ -427,12 +450,18 @@ function corregirEnlaces(topo, res) {
         if (!cumplida(t) && t[1].configurada !== t[3].configurada) { _unLado(topo, c, vis, t); }
     });
     cables.forEach(function (t, j) {
-        if (!cumplida(t) && !t[1].configurada && !t[3].configurada) {
-            _sinIp(topo, c, vis, rn.vlans, t, etiquetas[j], pedidas[j] || null, base, redesEscritas(res.tramos.map(function (tramo) { return tramo.leido.pedidas; })));
+        if (cumplida(t)) { return; }
+        // Lo que el cable de una nota repetida ya tenga en la red de la otra choca con ella (la misma ip
+        // en dos routers): ese cable va al primer /30 libre, como uno vacío.
+        var repetida = repetidas[j] !== undefined;
+        var choca = repetida && [t[1], t[3]].some(function (i) { return i.configurada && contiene(pedidas[j], i.ip); });
+        if (choca || (!t[1].configurada && !t[3].configurada)) {
+            _sinIp(topo, c, vis, rn.vlans, t, etiquetas[j], pedidas[j] || null, base, redesEscritas(res.tramos.map(function (tramo) { return tramo.leido.pedidas; })), repetida);
         }
     });
     _apagadas(topo, c);
-    _revisarNotas(c, vis, cables, etiquetas, base);
+    _revisarNotas(c, vis, cables, etiquetas, base, repetidas);
+    _avisarRepetidas(c, vis, cables, etiquetas, repetidas, pedidas);
     Object.keys(c.ordenes).forEach(function (k) { c.ordenes[k] = ordenar(c.ordenes[k], porPuerto); });
     return c;
 }

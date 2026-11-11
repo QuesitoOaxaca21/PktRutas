@@ -52,7 +52,7 @@ function _modos() {
 
 var _mainReal = main;
 main = function () {
-    _abrirBloc = function (tipo, texto, siempre) { _R.bloc.push(texto); _anota("bloc", _R.bloc); return true; };
+    _abrirBloc = function (texto) { _R.bloc.push(texto); _anota("bloc", _R.bloc); };
     _aPortapapeles = function () { };
     _mainReal();
     setTimeout(_siguientePaso, 1500);

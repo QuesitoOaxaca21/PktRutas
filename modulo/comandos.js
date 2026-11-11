@@ -775,7 +775,49 @@ function analizarXml(xml, opciones) {
         if (!puede(t.dueno)) { return; }
         ctx.pcs.push({ pc: t.equipo, vlan: t.vlan, reservado: t.reservado, dueno: t.dueno, red: t.red, gateway: t.gateway, telefono: true });
     });
+    var nombres = _renombresDePcs(ctx, puede);
+    ctx.renombres = nombres.lista;
+    ctx.sinRenombre = nombres.choques;
     return ctx;
+}
+
+// 'PC1 V3' -> 'PC1', 'V4 PC2' -> 'PC2', 'PC7 VLAN5' -> 'PC7': el nombre sin la VLAN que se le puso
+// para el programa. Igual que nombre_original en pkt/escribir.py.
+function nombreOriginal(nombre) {
+    var m = _RE_VLAN_PC.exec(nombre);
+    if (!m) { return nombre; }
+    var limpio = (nombre.substring(0, m.index) + " " + nombre.substring(m.index + m[0].length)).replace(/\s+/g, " ");
+    return limpio.replace(/^[ \-_#]+|[ \-_#]+$/g, "");
+}
+
+// Las PCs que traen su VLAN en el nombre vuelven a su nombre original en cuanto esa VLAN quedó en su
+// puerto de acceso, como en la copia que guarda el programa: ahí ya vive, y al volver a leer la
+// práctica sale igual del switch. Sólo con una VLAN de la nota de su sitio (otra, sin el nombre, se
+// repartiría) y fuera del switch de la controladora, donde la PC más cercana va en la nativa salvo que
+// su nombre diga otra. Si el nombre limpio ya es de otro equipo, se queda como está.
+function _renombresDePcs(ctx, puede) {
+    var usados = {}, vistas = {}, lista = [], choques = [];
+    ctx.topo.dispositivos.forEach(function (d) { usados[d.nombre] = true; });
+    ctx.plan.sitios.forEach(function (s) {
+        if (!puede(s.dueno.nombre)) { return; }
+        var numeros = s.vlans.map(function (v) { return v.numero; });
+        var wlc = s.nativa ? (s.inalambricos || []).filter(function (x) { return x.d.esControladora; })[0] : null;
+        s.pcs.forEach(function (p) {
+            if (vistas[p.pc] || p.fuente !== "nombre" || numeros.indexOf(p.vlan) < 0 || (wlc && p.equipo === wlc.equipo)) { return; }
+            var sw = ctx.topo.porNombre(p.equipo), ic = sw && sw.cfg ? sw.cfg.porNombre(p.puerto) : null;
+            if (!ic || ic.accesoVlan !== p.vlan) { return; }
+            var nuevo = nombreOriginal(p.pc);
+            if (!nuevo || nuevo === p.pc) { return; }
+            vistas[p.pc] = true;
+            if (usados[nuevo]) {
+                choques.push({ pc: p.pc, nuevo: nuevo });
+                return;
+            }
+            usados[nuevo] = true;
+            lista.push({ pc: p.pc, nuevo: nuevo });
+        });
+    });
+    return { lista: lista, choques: choques };
 }
 
 // Lo que se abre en el Bloc de notas: en minúsculas y sin rodeos.
@@ -812,6 +854,9 @@ function textoProblemas(ctx, nombreArchivo) {
         otros.push((a[0] === "plan" ? a[1] : etiqueta(a[0]) + ": " + a[1]).toLowerCase());
     });
     ctx.correcciones.avisos.concat(ctx.nombres.avisos, ctx.inalambrico.avisos).forEach(function (a) { otros.push(a.toLowerCase()); });
+    (ctx.sinRenombre || []).forEach(function (r) {
+        otros.push((r.pc + " se queda con su vlan en el nombre: " + r.nuevo + " ya es de otro equipo").toLowerCase());
+    });
     if (ctx.borraTodos) { otros.push("se rehacen todos los equipos: " + ctx.borraTodos + " traen algo mal"); }
     Object.keys(ctx.motivos).forEach(function (n) {
         ctx.motivos[n].forEach(function (m) { otros.push(("se rehace " + etiqueta(n) + ": " + m).toLowerCase()); });
@@ -840,10 +885,4 @@ function textoProblemas(ctx, nombreArchivo) {
         texto = cabeza.join("\n") + (texto ? "\n\n" + texto : "");
     }
     return texto;
-}
-
-function hayProblemas(ctx) {
-    return ctx.combos.malos > 0 || ctx.plan.errores.length > 0 || ctx.plan.avisos.length > 0
-        || ctx.correcciones.avisos.length > 0 || Object.keys(ctx.motivos).length > 0 || ctx.nombres.avisos.length > 0
-        || ctx.inalambrico.avisos.length > 0 || !!(ctx.pasivo && ctx.pasivo.faltas.length);
 }

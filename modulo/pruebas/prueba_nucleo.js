@@ -588,10 +588,11 @@ prueba("la nota de un router sin LAN propia va en el multicapa que cuelga de él
     assert.ok(dos.plan.errores.some((e) => e[1].includes("no tiene ningún switch cableado")), JSON.stringify(dos.plan.errores));
 });
 
-prueba("dos notas de enlace en el mismo /30: gana la que dice su inicio y se avisa quién lo usa", () => {
+prueba("dos notas de enlace en el mismo /30: gana la que dice su inicio y se avisa con las dos notas", () => {
     const c = analizar(cuatroRouters(COMO_P4, [".47", ".8", ".44", ".16", ".20"]));
     const t = llama("textoProblemas", c);
-    assert.ok(t.includes("la nota '.47' junto al cable r1 fastethernet0/0 - r2 fastethernet0/0 cae en 16.0.0.44/30, que ya usan r3 y r4: se eligió 16.0.0.4/30"), t);
+    assert.ok(t.includes("la nota '.47' junto al cable r1 fastethernet0/0 - r2 fastethernet0/0 repite la red de la nota '.44' junto al cable r3 fastethernet0/1 - r4 fastethernet0/0 (16.0.0.44/30): a r1 - r2 le toca 16.0.0.4/30 hasta que corrijas una"), t);
+    assert.ok(!t.includes("cae en"), "una sola línea por nota: " + t);
     assert.ok(c.bloques.find((b) => b.equipo === "R3").lineas.includes(" ip address 16.0.0.45 255.255.255.252"));
     assert.ok(c.bloques.find((b) => b.equipo === "R1").lineas.includes(" ip address 16.0.0.5 255.255.255.252"));
 });
@@ -949,6 +950,49 @@ prueba("una nota se queda con el cable que ya está en su red, aunque quede más
     const c = analizar(xml);
     assert.strictEqual(Object.keys(c.motivos).length, 0, JSON.stringify(c.motivos));
     assert.strictEqual(c.correcciones.avisos.length, 0, Array.from(c.correcciones.avisos).join("|"));
+});
+
+// Como EXP_P3: '.52' en dos cables. El primero ya está hecho (R1 .9 y R2 .10), y en el segundo R3 ya
+// tiene la .9, igual que R1.
+const CON = (n, ...ifaces) => R4T.concat(["hostname " + n], ...ifaces.map(([i, ip]) => ["interface " + i, " ip address " + ip + " 255.255.255.252"]));
+prueba("una nota repetida: la ip que ya choca con el otro cable se mueve al primer /30 libre, y se avisa", () => {
+    const cfg = { R1: CON("R1", ["FastEthernet0/0", "16.0.0.9"]), R2: CON("R2", ["FastEthernet0/0", "16.0.0.10"]),
+                  R3: CON("R3", ["FastEthernet0/1", "16.0.0.9"]) };
+    const c = analizar(cuatroRouters(COMO_P4, [".8", ".4", ".8", ".16", ".20"], cfg));
+    const t = llama("textoProblemas", c);
+    assert.ok(t.includes("la nota '.8' junto al cable r3 fastethernet0/1 - r4 fastethernet0/0 repite la red de la nota '.8' junto al cable r1 fastethernet0/0 - r2 fastethernet0/0 (16.0.0.8/30): a r3 - r4 le toca 16.0.0.12/30 hasta que corrijas una"), t);
+    assert.strictEqual(t.split("repite la red").length, 2, "un solo aviso: " + t);
+    assert.ok(bloqueDe(c, "R3").includes(" ip address 16.0.0.13 255.255.255.252"), bloqueDe(c, "R3").join("|"));
+    assert.ok(bloqueDe(c, "R4").includes(" ip address 16.0.0.14 255.255.255.252"), bloqueDe(c, "R4").join("|"));
+    assert.ok(motivosDe(c, "R3").includes("FastEthernet0/1 tiene 16.0.0.9 255.255.255.252, y le toca 16.0.0.13 255.255.255.252"), JSON.stringify(c.motivos));
+    assert.strictEqual(motivosDe(c, "R1") + motivosDe(c, "R2"), "", "el cable que ya estaba hecho se queda como está");
+    // Ninguna ruta va por una ip del mismo router (antes, R1 y R3 tenían la .9 y sus rutas no entraban).
+    for (const n of ["R1", "R2", "R3", "R4"]) {
+        const propias = bloqueDe(c, n).map((l) => / ip address (\S+)/.exec(l)).filter(Boolean).map((x) => x[1]);
+        const rutas = bloqueDe(c, n).filter((l) => /^ip route /.test(l));
+        assert.ok(rutas.every((l) => !propias.includes(l.split(" ").pop())), n + ": " + rutas.join("|"));
+    }
+    // Ya corregida la nota ('.12'), no queda aviso.
+    assert.ok(!llama("textoProblemas", analizar(cuatroRouters(COMO_P4, [".8", ".4", ".12", ".16", ".20"], cfg))).includes("repite la red"));
+});
+
+prueba("entre dos notas iguales se queda con la red el cable que ya está hecho, aunque vaya después", () => {
+    const cfg = { R3: CON("R3", ["FastEthernet0/1", "16.0.0.9"]), R4: CON("R4", ["FastEthernet0/0", "16.0.0.10"]) };
+    const c = analizar(cuatroRouters(COMO_P4, [".8", ".4", ".8", ".16", ".20"], cfg));
+    const t = llama("textoProblemas", c);
+    assert.ok(t.includes("la nota '.8' junto al cable r1 fastethernet0/0 - r2 fastethernet0/0 repite la red de la nota '.8' junto al cable r3 fastethernet0/1 - r4 fastethernet0/0 (16.0.0.8/30): a r1 - r2 le toca 16.0.0.12/30 hasta que corrijas una"), t);
+    assert.strictEqual(motivosDe(c, "R3") + motivosDe(c, "R4"), "", JSON.stringify(c.motivos));
+    assert.ok(bloqueDe(c, "R1").includes(" ip address 16.0.0.13 255.255.255.252"), bloqueDe(c, "R1").join("|"));
+    assert.ok(bloqueDe(c, "R2").includes(" ip address 16.0.0.14 255.255.255.252"), bloqueDe(c, "R2").join("|"));
+});
+
+prueba("una nota repetida en un cable que ya funciona en otra red: sólo se avisa", () => {
+    const cfg = { R3: CON("R3", ["FastEthernet0/1", "16.0.0.25"]), R4: CON("R4", ["FastEthernet0/0", "16.0.0.26"]) };
+    const c = analizar(cuatroRouters(COMO_P4, [".4", ".8", ".8", ".16", ".20"], cfg));
+    const t = llama("textoProblemas", c);
+    assert.ok(t.includes("repite la red de la nota '.8' junto al cable r2 fastethernet0/1 - r3 fastethernet0/0 (16.0.0.8/30): a r3 - r4 le toca 16.0.0.24/30 hasta que corrijas una"), t);
+    assert.ok(!t.includes("pero el enlace tiene"), "no se dice dos veces: " + t);
+    assert.strictEqual(motivosDe(c, "R3") + motivosDe(c, "R4"), "", JSON.stringify(c.motivos));
 });
 
 prueba("un puerto suelto encima de un combo no le gana a lo que escribiste", () => {
@@ -1523,7 +1567,6 @@ prueba("pasivo estricto: sólo se toca el router con su DHCP y su /30 bien, y lo
     const t = llama("textoProblemas", c);
     assert.ok(t.startsWith("modo pasivo estricto: aplicar sólo toca los routers y cores que ya traen completos y bien su dhcp y sus enlaces /30, y los switches que cuelgan de ellos\n"
                            + "cumplen 1 de 2: r1\nno se toca r2: le falta el pool de la vlan 2\nno se toca r2: le falta el pool de la vlan 3\n\ncombos bien"), t);
-    assert.ok(llama("hayProblemas", c));
     const ambos = conModo("estricto", { cfgR1: R1_DHCP_30, cfgR2: R2_SOLO_30.concat(R2_POOLS) });
     assert.deepStrictEqual(Array.from(ambos.pasivo.cumplen), ["Router0", "Router1"]);
     assert.deepStrictEqual(equiposDe(ambos), ["Router0", "Router1", "Switch0", "Switch1"]);
@@ -1553,7 +1596,7 @@ prueba("pasivo medio: bastan los /30 bien, y el DHCP lo pone aplicar", () => {
     assert.deepStrictEqual(Array.from(c.pasivo.cumplen), ["Router0", "Router1"]);
     assert.deepStrictEqual(equiposDe(c), ["Router0", "Router1", "Switch0", "Switch1"]);
     assert.ok(bloqueDe(c, "Router1").includes(" default-router 11.0.11.254"), bloqueDe(c, "Router1").join("|"));
-    assert.ok(!llama("hayProblemas", c), llama("textoProblemas", c));
+    assert.ok(!llama("textoProblemas", c).includes("no se toca"), llama("textoProblemas", c));
     assert.ok(llama("textoProblemas", c).startsWith("modo pasivo medio: aplicar sólo toca los routers y cores que ya traen completos y bien sus enlaces /30"));
     const nada = conModo("medio", { cfgR2: R2_SOLO_30 });
     assert.deepStrictEqual(Array.from(nada.pasivo.cumplen), ["Router1"]);
@@ -1641,6 +1684,57 @@ prueba("en pasivo, los teléfonos esperan su IP sólo si su router o core cumple
     assert.ok(llama("textoProblemas", ambos).includes(LINEA_INA + "\n"), llama("textoProblemas", ambos));
 });
 
+// --- las PCs que llevan su VLAN en el nombre --------------------------------------------------
+
+const PC1_V3 = (xml) => xml.replace(">PC1<", ">PC1 V3<");
+// PC1 va en Fa0/2 de Switch0, y por el reparto le tocaría la VLAN 2.
+const S1_V3 = ["hostname Switch", "interface FastEthernet0/1", "interface FastEthernet0/2", " switchport access vlan 3", " switchport mode access",
+               "interface FastEthernet0/3", "interface FastEthernet0/4"];
+const renombresDe = (c) => Array.from(c.renombres, (r) => r.pc + " > " + r.nuevo);
+const pcDe = (c, nombre) => c.plan.sitios.map((s) => s.pcs.find((p) => p.pc === nombre)).find(Boolean);
+
+prueba("el nombre original de una PC es su nombre sin la VLAN, como en el programa", () => {
+    for (const [con, sin] of [["PC1 V3", "PC1"], ["V4 PC2", "PC2"], ["PC7 VLAN5", "PC7"], ["PC29 VLAN4", "PC29"], ["PC7-VLAN 5", "PC7"], ["Laptop0", "Laptop0"]]) {
+        assert.strictEqual(llama("nombreOriginal", con), sin, con);
+    }
+});
+
+prueba("una PC con su VLAN en el nombre vuelve a su nombre cuando esa VLAN ya quedó en su puerto, y el plan sale igual", () => {
+    assert.deepStrictEqual(renombresDe(analizar(PC1_V3(practica(N1, N2)))), [], "mientras su puerto no la tenga, el nombre hace falta");
+    const conVlan = analizar(PC1_V3(practica(N1, N2, { cfgS1: S1_V3 })));
+    assert.strictEqual(pcDe(conVlan, "PC1 V3").fuente, "nombre");
+    assert.deepStrictEqual(renombresDe(conVlan), ["PC1 V3 > PC1"]);
+    // Ya renombrada, su VLAN sale del switch: lo mismo, y los mismos comandos.
+    const ya = analizar(practica(N1, N2, { cfgS1: S1_V3 }));
+    assert.deepStrictEqual([pcDe(ya, "PC1").vlan, pcDe(ya, "PC1").fuente], [3, "switch"]);
+    const lineas = (c) => c.bloques.map((b) => b.equipo + ": " + b.lineas.join("|")).join("\n");
+    assert.strictEqual(lineas(ya), lineas(conVlan));
+    assert.deepStrictEqual(renombresDe(ya), []);
+});
+
+prueba("no se renombra con una VLAN fuera de la nota, con el nombre ocupado, junto a la controladora ni donde el modo no toca", () => {
+    const fuera = analizar(practica(N1, N2, { cfgS1: S1_V3.map((l) => l.replace("vlan 3", "vlan 9")) }).replace(">PC1<", ">PC1 V9<"));
+    assert.deepStrictEqual(renombresDe(fuera), [], "sin el nombre, una VLAN que ninguna nota dice se perdería");
+    // PC0 se llama 'PC1 V3' y su puerto ya está en la 3, pero PC1 existe: se queda, y Ver lo dice.
+    const s1 = ["hostname Switch", "interface FastEthernet0/1", "interface FastEthernet0/2", "interface FastEthernet0/3", " switchport access vlan 3",
+                " switchport mode access", "interface FastEthernet0/4"];
+    const choque = analizar(practica(N1, N2, { cfgS1: s1 }).replace(">PC0<", ">PC1 V3<"));
+    assert.deepStrictEqual(renombresDe(choque), []);
+    assert.deepStrictEqual(Array.from(choque.sinRenombre, (r) => r.pc + " > " + r.nuevo), ["PC1 V3 > PC1"]);
+    assert.ok(llama("textoProblemas", choque).includes("\npc1 v3 se queda con su vlan en el nombre: pc1 ya es de otro equipo"), llama("textoProblemas", choque));
+    // En el switch de la controladora la más cercana va en la nativa si su nombre no dice otra: ahí se queda.
+    const ina = wifi({ cfg: { SWR1: ["hostname Switch", "interface FastEthernet0/5", " switchport access vlan 2"],
+                              S1: ["hostname Switch", "interface FastEthernet0/1", "interface FastEthernet0/2", "interface FastEthernet0/3",
+                                   "interface FastEthernet0/4", " switchport access vlan 3"] } });
+    const conIna = analizar(ina.replace(">PC0<", ">PC0 V2<").replace(">PC1<", ">PC1 V3<"));
+    assert.strictEqual(conIna.topo.porNombre("SWR1").cfg.porNombre("FastEthernet0/5").accesoVlan, 2, "su puerto ya está en la 2");
+    assert.deepStrictEqual([pcDe(conIna, "PC0 V2").vlan, pcDe(conIna, "PC0 V2").fuente], [2, "nombre"]);
+    assert.deepStrictEqual(renombresDe(conIna), ["PC1 V3 > PC1"]);
+    const pasivo = analizar(PC1_V3(practica(N1, N2, { cfgS1: S1_V3 })), { modo: "bajo" });
+    assert.strictEqual(pasivo.pasivo.cumplen.length, 0);
+    assert.deepStrictEqual(renombresDe(pasivo), [], "lo de un router que no cumple no se toca");
+});
+
 prueba("cifrar y descifrar dan lo mismo, con acentos y más de un bloque", () => {
     const fs = require("fs"), path = require("path");
     m.__x = "<a>ñandú 😀</a>" + "x".repeat(200000);
@@ -1671,6 +1765,8 @@ function ptDeMentira(xml, archivo) {
     const app = {
         getMainViewAreaWidth: () => pt.area[0], getMainViewAreaHeight: () => pt.area[1],
         getActiveFile: () => ({ getSavedFilename: () => pt.archivo, getObjectUuid: () => pt.uuid }),
+        // Las notas que corrige el pánico: aquí no cambian nada.
+        getActiveWorkspace: () => ({ getLogicalWorkspace: () => ({ removeCanvasItem() { }, addNote: () => "nota", setCanvasItemRealPos() { } }) }),
         fileSaveToBytes: () => { if (pt.roto) { throw new Error(pt.roto); } return pt.xml; },
         getTempFileLocation: () => "T:\\temp", getDefaultFileSaveLocation: () => "D:/saves", getUserFolder: () => pt.usuario || "",
         openURL: (u) => {
@@ -1715,12 +1811,10 @@ function ptDeMentira(xml, archivo) {
 
 const practicaSinNotas = () => `<X><DEVICES>${equipo("r", "Router0", "Router", "2811", 100, 100, ROUTER)}</DEVICES><NOTES></NOTES></X>`;
 
-prueba("módulo: al abrir, los comandos van al Bloc de notas y a la página sólo lo de los botones", () => {
+prueba("módulo: al abrir no se abre el Bloc de notas, y a la página sólo va lo de los botones", () => {
     const pt = ptDeMentira(practica(R1_BIEN, R2_BIEN), "P1.pkt");
     pt.abrir();
-    assert.strictEqual(pt.blocs.length, 1);
-    assert.ok(/^T:\/temp\/P1_comandos_\d{6}\.txt$/.test(pt.blocs[0].ruta), pt.blocs[0].ruta);
-    assert.strictEqual(pt.blocs[0].texto, pt.ev("textoBloques(_CTX.bloques)"));
+    assert.strictEqual(pt.blocs.length, 0);
     assert.ok(/^mostrar\(/.test(pt.ultimaUi()), pt.ultimaUi());
     const d = JSON.parse(pt.ultimaUi().slice(8, -1));
     assert.deepStrictEqual(Object.keys(d).sort(), ["modo", "panico", "pendientes"]);
@@ -1728,6 +1822,8 @@ prueba("módulo: al abrir, los comandos van al Bloc de notas y a la página sól
     assert.strictEqual(d.pendientes, pt.ev("_CTX.bloques.length"));
     assert.strictEqual(pt.aviso, d.pendientes + " equipos por configurar");
     assert.strictEqual(pt.copias.length, 0, "abrir no toca el portapapeles");
+    pt.correr();
+    assert.strictEqual(pt.blocs.length, 0, "ni después");
 });
 
 prueba("módulo: la barra va dentro del lienzo, crece sin moverse y no se sale de él", () => {
@@ -1791,62 +1887,67 @@ prueba("módulo: pedirla en el menú de Packet Tracer la abre completa", () => {
     assert.ok(pt.ui.includes("expandir(true)"));
 });
 
-prueba("módulo: con errores en las notas se abren los comandos y luego los problemas, en minúsculas", () => {
+prueba("módulo: con errores en las notas no se abre nada solo; Ver da los problemas, en minúsculas", () => {
     const pt = ptDeMentira(practica(R1_MUY_MAL, R2_MUY_MAL), "P1.pkt");
     pt.abrir();
-    assert.strictEqual(pt.blocs.length, 1, "primero los comandos");
-    assert.ok(/_comandos_/.test(pt.blocs[0].ruta));
     pt.correr();
-    assert.strictEqual(pt.blocs.length, 2, "y al rato los problemas");
-    assert.ok(/_problemas_/.test(pt.blocs[1].ruta));
-    assert.strictEqual(pt.blocs[1].texto, pt.blocs[1].texto.toLowerCase());
-    assert.ok(/^combos bien: \d+ de 8/.test(pt.blocs[1].texto), pt.blocs[1].texto);
+    assert.strictEqual(pt.blocs.length, 0);
     const malos = pt.ev("_CTX.combos.malos");
     assert.strictEqual(pt.aviso, pt.ev("_CTX.bloques.length") + " por configurar, " + malos + " combos mal");
+    pt.llama("uiVerProblemas");
+    assert.strictEqual(pt.blocs.length, 1);
+    assert.ok(/^T:\/temp\/P1_problemas_\d{6}\.txt$/.test(pt.blocs[0].ruta), pt.blocs[0].ruta);
+    assert.strictEqual(pt.blocs[0].texto, pt.blocs[0].texto.toLowerCase());
+    assert.ok(/^combos bien: \d+ de 8/.test(pt.blocs[0].texto), pt.blocs[0].texto);
 });
 
-prueba("módulo: lo que no cambió no se reabre; F5 sí, en el mismo archivo", () => {
+prueba("módulo: ni F5 ni volver a abrir la barra abren nada; Ver otra vez, con lo mismo, usa el mismo archivo", () => {
     const pt = ptDeMentira(practica(R1_MUY_MAL, R2_MUY_MAL), "P1.pkt");
     pt.abrir();
     pt.correr();
-    const antes = pt.blocs.map((b) => b.ruta);
     pt.llama("uiLista");
-    pt.correr();
-    assert.strictEqual(pt.blocs.length, 2, "volver a abrir la barra no repite");
     pt.llama("uiReleer");
     pt.correr();
-    assert.deepStrictEqual(pt.blocs.slice(2).map((b) => b.ruta), antes, "F5 repite lo mismo");
+    assert.strictEqual(pt.blocs.length, 0);
+    pt.llama("uiVerProblemas");
+    pt.llama("uiVerProblemas");
+    assert.strictEqual(pt.blocs.length, 2, "cada vez que lo pides, se abre");
+    assert.strictEqual(pt.blocs[1].ruta, pt.blocs[0].ruta);
+    assert.strictEqual(Object.keys(pt.escritos).length, 1, "y se escribe una vez");
 });
 
-prueba("módulo: si cambian las notas, F5 abre otro archivo con lo nuevo", () => {
+prueba("módulo: si cambian las notas, Ver abre otro archivo con lo nuevo", () => {
     const pt = ptDeMentira(practica(R1_MUY_MAL, R2_MUY_MAL), "P1.pkt");
     pt.abrir();
-    pt.correr();
+    pt.llama("uiVerProblemas");
     pt.xml = practica(R1_BIEN, R2_MUY_MAL);
     pt.ev("Date = class extends Date { toTimeString() { return '23:59:59 GMT'; } }");
     pt.llama("uiReleer");
-    pt.correr();
-    const nuevos = pt.blocs.slice(2);
-    assert.strictEqual(nuevos.length, 2);
-    assert.ok(nuevos.every((b) => /_235959\.txt$/.test(b.ruta)), nuevos.map((b) => b.ruta).join());
-    assert.notStrictEqual(nuevos[1].texto, pt.blocs[1].texto);
-    assert.strictEqual(pt.escritos[nuevos[1].ruta], nuevos[1].texto);
+    assert.strictEqual(pt.blocs.length, 1, "F5 sólo vuelve a leer");
+    pt.llama("uiVerProblemas");
+    assert.strictEqual(pt.blocs.length, 2);
+    assert.ok(/_problemas_235959\.txt$/.test(pt.blocs[1].ruta), pt.blocs[1].ruta);
+    assert.notStrictEqual(pt.blocs[1].texto, pt.blocs[0].texto);
+    assert.strictEqual(pt.escritos[pt.blocs[1].ruta], pt.blocs[1].texto);
 });
 
-prueba("módulo: abrir otra práctica, o la misma otra vez, se actualiza y abre todo", () => {
-    const pt = ptDeMentira(practica(R1_BIEN, R2_BIEN), "P1.pkt");
+prueba("módulo: abrir otra práctica, o la misma otra vez, la vuelve a leer sin abrir nada", () => {
+    const pt = ptDeMentira(practica(R1_MUY_MAL, R2_MUY_MAL), "P1.pkt");
     pt.abrir();
     pt.correr();
-    assert.strictEqual(pt.blocs.length, 1, "sin cambios, el vigía no hace nada");
+    const aviso = pt.aviso;
+    pt.aviso = "";
+    pt.correr();
+    assert.strictEqual(pt.aviso, "", "sin cambios, el vigía no hace nada");
     pt.uuid = "{dos}";
     pt.correr();
-    assert.strictEqual(pt.blocs.length, 2, "la misma práctica reabierta");
+    assert.strictEqual(pt.aviso, aviso, "la misma práctica reabierta");
     pt.uuid = "{tres}";
     pt.archivo = "P2.pkt";
     pt.xml = practicaSinNotas();
     pt.correr();
-    assert.strictEqual(pt.blocs.length, 2, "una sin notas no abre nada");
     assert.strictEqual(pt.aviso, "Sin notas con VLANs");
+    assert.strictEqual(pt.blocs.length, 0);
 });
 
 prueba("módulo: Ver siempre abre: sin notas, cómo escribirlas; con ellas, los problemas o que no hay", () => {
@@ -1872,14 +1973,14 @@ prueba("módulo: sin nada pendiente, Copiar todo da la configuración completa",
     assert.strictEqual(pt.copias[pt.copias.length - 1], completa);
 });
 
-prueba("módulo: los supuestos van al pie de los problemas, pero solos no abren nada", () => {
+prueba("módulo: los supuestos van al pie de los problemas", () => {
     const pt = ptDeMentira(practica(R1_BIEN, R2_BIEN), "P1.pkt");
     pt.ev("analizarXml = (function (real) { return function (x) { var c = real(x); c.plan.supuestos.push('PC6 sin VLAN en su nombre'); return c; }; })(analizarXml)");
     pt.abrir();
     pt.correr();
-    assert.strictEqual(pt.blocs.length, 1, "sólo los comandos");
+    assert.strictEqual(pt.blocs.length, 0);
     pt.llama("uiVerProblemas");
-    assert.ok(/\n\nse supuso:\n(.*\n)*pc6 sin vlan en su nombre\n$/.test(pt.blocs[1].texto), pt.blocs[1].texto);
+    assert.ok(/\n\nse supuso:\n(.*\n)*pc6 sin vlan en su nombre\n$/.test(pt.blocs[0].texto), pt.blocs[0].texto);
 });
 
 prueba("módulo: copiar todo", () => {
@@ -1892,12 +1993,12 @@ prueba("módulo: copiar todo", () => {
     assert.strictEqual(pt.aviso, "Copiados " + lista.length + " equipos");
 });
 
-prueba("módulo: guardar los comandos, cancelar, y si no se puede lo dice en el Bloc de notas", () => {
+prueba("módulo: guardar los comandos, cancelar, y si no se puede lo dice el aviso y Ver da el detalle", () => {
     const pt = ptDeMentira(practica(R1_BIEN, R2_BIEN), "P1.pkt");
     pt.abrir();
     const blocs = pt.blocs.length;
     pt.llama("uiGuardarComandos");
-    assert.strictEqual(Object.keys(pt.escritos).length, 1, "cancelar no escribe");
+    assert.strictEqual(Object.keys(pt.escritos).length, 0, "cancelar no escribe");
     pt.guardar = "D:/x/mios.txt";
     pt.llama("uiGuardarComandos");
     assert.strictEqual(pt.escritos[pt.guardar], pt.ev("textoBloques(_CTX.bloques)"));
@@ -1906,56 +2007,60 @@ prueba("módulo: guardar los comandos, cancelar, y si no se puede lo dice en el 
     pt.noSeGuarda = true;
     pt.guardar = "D:/x/no.txt";
     pt.llama("uiGuardarComandos");
-    assert.strictEqual(pt.blocs.length, blocs + 1);
-    assert.strictEqual(pt.blocs[blocs].texto, "no se pudo guardar: d:/x/no.txt\n");
-    assert.strictEqual(pt.aviso, "No se pudo guardar");
+    assert.strictEqual(pt.blocs.length, blocs, "no se abre solo");
+    assert.strictEqual(pt.aviso, "No se pudo guardar (Ctrl+R)");
+    pt.llama("uiVerProblemas");
+    assert.ok(pt.blocs[blocs].texto.startsWith("no se pudo guardar: d:/x/no.txt\n\n"), pt.blocs[blocs].texto);
 });
 
-prueba("módulo: si no se puede leer, el error va al Bloc de notas y F5 vuelve a intentar", () => {
+prueba("módulo: si no se puede leer, se avisa, Ver dice por qué y F5 vuelve a intentar", () => {
     const pt = ptDeMentira(practica(R1_BIEN, R2_BIEN), "P1.pkt");
     pt.abrir();
     pt.roto = "Archivo RARO";
     pt.llama("uiReleer");
-    assert.strictEqual(pt.aviso, "No se pudo leer la práctica");
+    assert.strictEqual(pt.aviso, "No se pudo leer la práctica (Ctrl+R)");
     assert.strictEqual(pt.ultimaUi(), "fallo(true)");
-    const texto = pt.blocs[pt.blocs.length - 1].texto;
-    assert.ok(/^no se pudo leer la práctica: error: archivo raro\n$/.test(texto), texto);
+    assert.strictEqual(pt.blocs.length, 0, "no se abre solo");
     assert.strictEqual(pt.ev("_CTX"), null, "no se queda lo de antes");
-    const blocs = pt.blocs.length;
     pt.correr();
-    assert.strictEqual(pt.blocs.length, blocs, "el vigía no insiste");
     pt.llama("uiVerProblemas");
-    assert.strictEqual(pt.blocs.length, blocs + 1, "Ver también lo intenta, y avisa");
+    assert.strictEqual(pt.blocs.length, 1, "Ver lo intenta otra vez, y dice por qué");
+    assert.ok(/^no se pudo leer la práctica: error: archivo raro\n$/.test(pt.blocs[0].texto), pt.blocs[0].texto);
     pt.roto = null;
     pt.llama("uiReleer");
     assert.ok(/^mostrar\(/.test(pt.ultimaUi()), pt.ultimaUi());
-    assert.ok(/por configurar/.test(pt.aviso), pt.aviso);
+    assert.ok(/por configurar$/.test(pt.aviso), pt.aviso);
+    pt.llama("uiVerProblemas");
+    assert.ok(!/no se pudo leer/.test(pt.blocs[1].texto), "ya leída, eso ya no sale: " + pt.blocs[1].texto);
 });
 
-prueba("módulo: cerrar y volver a abrir la barra abre otra vez sus Blocs de notas", () => {
-    const pt = ptDeMentira(practica(R1_BIEN, R2_BIEN), "P1.pkt");
+prueba("módulo: cerrar y volver a abrir la barra no abre el Bloc de notas", () => {
+    const pt = ptDeMentira(practica(R1_MUY_MAL, R2_MUY_MAL), "P1.pkt");
     pt.abrir();
     pt.llama("uiCerrar");
     assert.strictEqual(pt.ev("_VENTANA"), null);
     pt.correr();
     assert.strictEqual(pt.temporizadores.length, 0, "cerrada, el vigía se detiene");
     pt.abrir();
-    assert.strictEqual(pt.blocs.length, 2);
+    pt.correr();
+    assert.strictEqual(pt.blocs.length, 0);
 });
 
-prueba("módulo: aplicar dice qué hace, y lo que IOS rechaza va al Bloc de notas", () => {
+prueba("módulo: aplicar dice qué hace; lo que IOS rechaza no se abre solo, y Ver lo pone arriba", () => {
     const pt = ptDeMentira(practica(R1_BIEN, R2_BIEN), "P1.pkt");
     pt.abrir();
     pt.correr();
-    const n = pt.ev("_CTX.bloques.length"), blocs = pt.blocs.length;
+    const n = pt.ev("_CTX.bloques.length");
     pt.llama("uiAplicar");
     assert.strictEqual(pt.aviso, "Aplicando...");
     assert.strictEqual(pt.ultimaUi(), "ocupado(true)");
     pt.correr();
-    assert.strictEqual(pt.aviso, "Aplicado a " + n + " equipos");
+    assert.strictEqual(pt.aviso, "Aplicado a " + n + " equipos (Ctrl+R)", "aquí ningún equipo está en la red");
     assert.ok(/^mostrar\(/.test(pt.ultimaUi()), pt.ultimaUi());
-    assert.strictEqual(pt.blocs.length, blocs + 1, "aquí ningún equipo está en la red");
-    assert.ok(/ios rechazó:\nr1: no está en la red\n/i.test(pt.blocs[blocs].texto), pt.blocs[blocs].texto);
+    assert.strictEqual(pt.blocs.length, 0);
+    pt.llama("uiVerProblemas");
+    assert.ok(/^ios rechazó:\nr1: no está en la red\n/i.test(pt.blocs[0].texto), pt.blocs[0].texto);
+    assert.ok(pt.blocs[0].texto.includes("\n\ncombos bien: 8 de 8"), "y luego los problemas de las notas: " + pt.blocs[0].texto);
 });
 
 // Un equipo o una PC de mentira, para ver qué teclea y a quién le pide DHCP.
@@ -2024,7 +2129,7 @@ prueba("módulo: a las PCs de un equipo al que se le puso su pool se les pide DH
     assert.strictEqual(pt.temporizadores.filter((f) => /_pedirIps/.test(String(f))).length, 0, "ya no se reintenta");
 });
 
-prueba("módulo: si al final una PC no queda en su red, se dice cuál en el Bloc de notas", () => {
+prueba("módulo: si al final una PC no queda en su red, el aviso lo dice y Ver dice cuál", () => {
     const pt = ptDeMentira(practica(N1, N2), "P1.pkt");
     redDeMentira(pt, ["0.0.0.0"].concat(IPS_BIEN.slice(1)));
     pt.abrir();
@@ -2032,9 +2137,78 @@ prueba("módulo: si al final una PC no queda en su red, se dice cuál en el Bloc
     pt.llama("uiAplicar");
     pt.correr();
     for (let i = 0; i < 16; i++) { pt.correr(); }
-    assert.ok(/PCs con IP; revísalas$/.test(pt.aviso), pt.aviso);
-    const texto = pt.blocs[pt.blocs.length - 1].texto;
-    assert.ok(/^se pidió dhcp y estas pcs no quedaron en su red: pc0\n/.test(texto), texto);
+    assert.ok(/^5 de 6 PCs con IP; revísalas \(Ctrl\+R\)$/.test(pt.aviso), pt.aviso);
+    assert.strictEqual(pt.blocs.length, 0, "no se abre solo");
+    pt.llama("uiVerProblemas");
+    assert.ok(/^se pidió dhcp y estas pcs no quedaron en su red: pc0\n\n/.test(pt.blocs[0].texto), pt.blocs[0].texto);
+});
+
+prueba("módulo: lo que dejó aplicar se queda hasta que aplicas otra vez, das F5 o abres otra práctica", () => {
+    const pt = ptDeMentira(practica(R1_BIEN, R2_BIEN), "P1.pkt");
+    pt.abrir();
+    const rechazo = () => { pt.llama("uiVerProblemas"); return /^ios rechazó:/.test(pt.blocs[pt.blocs.length - 1].texto); };
+    pt.llama("uiAplicar");
+    pt.correr();
+    pt.llama("uiModo", "activo");
+    assert.ok(rechazo(), "cambiar de modo no lo borra");
+    pt.llama("uiReleer");
+    assert.ok(!rechazo(), "F5 empieza de nuevo");
+    pt.llama("uiAplicar");
+    pt.correr();
+    assert.ok(rechazo());
+    redDeMentira(pt, IPS_BIEN);
+    pt.llama("uiAplicar");
+    pt.correr();
+    assert.ok(!/\(Ctrl\+R\)$/.test(pt.aviso), pt.aviso);
+    assert.ok(!rechazo(), "aplicar otra vez, sin rechazos, lo quita");
+    pt.ev("_anotar('algo')");
+    pt.uuid = "{otra}";
+    pt.correr();
+    assert.ok(!pt.ev("_HECHO.length"), "otra práctica, también");
+});
+
+// La PC1 de la red de mentira se llama 'PC1 V3', y setName la renombra como Packet Tracer: en la red y
+// en el archivo.
+function conPc1V3(pt) {
+    const pc1 = pt.red.PC1;
+    delete pt.red.PC1;
+    pt.red["PC1 V3"] = pc1;
+    pc1.setName = (n) => {
+        delete pt.red["PC1 V3"];
+        pt.red[n] = pc1;
+        pt.xml = pt.xml.replace(">PC1 V3<", ">" + n + "<");
+    };
+    return pc1;
+}
+
+prueba("módulo: al terminar de aplicar, la PC cuya VLAN ya quedó en su puerto vuelve a su nombre, y su DHCP se pide con él", () => {
+    const pt = ptDeMentira(PC1_V3(practica(N1, N2, { cfgS1: S1_V3 })), "P1.pkt");
+    redDeMentira(pt, IPS_BIEN);
+    const pc1 = conPc1V3(pt);
+    pt.abrir();
+    pt.correr();
+    pt.llama("uiAplicar");
+    pt.correr();
+    assert.ok(pt.red.PC1 === pc1 && !pt.red["PC1 V3"], Object.keys(pt.red).join());
+    assert.ok(pt.xml.includes(">PC1<") && !pt.xml.includes("PC1 V3"));
+    assert.ok(pt.ev("_CTX.pcs").some((p) => p.pc === "PC1" && p.vlan === 3), "con su nombre sigue en la VLAN 3");
+    assert.strictEqual(pt.ev("_CTX.renombres.length"), 0);
+    pt.correr();    // el primer pedido de DHCP
+    assert.strictEqual(pc1.pedidos, 1);
+});
+
+prueba("módulo: si sólo falta renombrar, Aplicar se puede usar y dice cuántas volvieron a su nombre", () => {
+    const pt = ptDeMentira(PC1_V3(practica(N1, N2, { cfgS1: S1_V3 })), "P1.pkt");
+    pt.ev("analizarXml = (function (real) { return function (x, o) { var c = real(x, o); c.bloques = []; return c; }; })(analizarXml)");
+    redDeMentira(pt, IPS_BIEN);
+    conPc1V3(pt);
+    pt.abrir();
+    assert.strictEqual(pt.aviso, "1 PC por renombrar");
+    assert.strictEqual(JSON.parse(pt.ultimaUi().slice(8, -1)).pendientes, 1, "Aplicar se puede usar");
+    pt.llama("uiAplicar");
+    pt.correr();
+    assert.strictEqual(pt.aviso, "1 PC volvió a su nombre");
+    assert.ok(pt.red.PC1);
 });
 
 prueba("módulo: borrar todo se aplica a todos los equipos", () => {
@@ -2107,7 +2281,8 @@ prueba("módulo: al arrancar lee el modo que se guardó; uno que no existe no cu
     pt.abrir();
     assert.ok(pt.ui.includes('modo("medio")'), pt.ui.join("|"));
     assert.strictEqual(pt.aviso, "Pasivo medio: ningún equipo cumple todavía");
-    assert.strictEqual(pt.blocs.length, 1, "sin nada que aplicar, sólo los problemas");
+    assert.strictEqual(pt.blocs.length, 0);
+    pt.llama("uiVerProblemas");
     assert.ok(pt.blocs[0].texto.startsWith("modo pasivo medio: "), pt.blocs[0].texto);
     const raro = ptDeMentira(practica(N1, N2), "P1.pkt");
     raro.escritos["T:/temp/pktrutas_modo.txt"] = "turbo\n";
@@ -2123,15 +2298,20 @@ prueba("módulo: lo inalámbrico se escribe y se reabre al aplicar, y el botón 
     pt.red = {};
     pt.abrir();
     pt.correr();
-    assert.ok(pt.blocs[0].texto.includes("sin comandos, lo pone aplicar:"), pt.blocs[0].texto);
+    assert.strictEqual(pt.blocs.length, 0);
+    // No lleva comandos: va al pie de los problemas, por si se quiere ver, con sus mayúsculas.
+    pt.llama("uiVerProblemas");
+    assert.ok(pt.blocs[0].texto.includes("\n\nlo inalámbrico lo pone aplicar, sin comandos:\nWLC0\n"), pt.blocs[0].texto);
     assert.ok(pt.blocs[0].texto.includes("WLC, entra con admin / Abc1234, ip 16.0.0.29 255.255.255.240, puerta 16.0.0.30"), pt.blocs[0].texto);
     pt.llama("uiCopiarTodo");
-    assert.ok(!pt.copias[0].includes("sin comandos"), "lo que no es consola no se copia");
+    assert.ok(!pt.copias[0].includes("WLC"), "lo que no es consola no se copia");
     pt.llama("uiAplicar");
     pt.correr();
     assert.strictEqual(pt.reabierta.ruta, "C:/saves/P.pkt", "conserva su nombre");
     assert.strictEqual(pt.ev("_CTX.inalambrico.pendiente"), false);
-    assert.ok(/guarda la práctica$/.test(pt.aviso), pt.aviso);
+    assert.ok(/guarda la práctica \(Ctrl\+R\)$/.test(pt.aviso), "aquí lo de IOS no está en la red: " + pt.aviso);
+    pt.llama("uiVerProblemas");
+    assert.ok(!pt.blocs[1].texto.includes("lo pone aplicar"), "ya puesto, ya no sale: " + pt.blocs[1].texto);
     const antes = pt.subidas;
     pt.correr();
     assert.strictEqual(pt.ev("_LEIDO"), "{reabierta}", "no se confunde con otra práctica");
@@ -2189,7 +2369,10 @@ prueba("módulo: si Packet Tracer no la puede abrir, se dice", () => {
     pt.llama("uiAplicar");
     pt.correr();
     assert.strictEqual(pt.ultimaUi(), "fallo(true)");
-    assert.ok(/packet tracer no pudo abrirla/.test(pt.blocs[pt.blocs.length - 1].texto), pt.blocs[pt.blocs.length - 1].texto);
+    assert.strictEqual(pt.aviso, "No se pudo aplicar (Ctrl+R)");
+    assert.strictEqual(pt.blocs.length, 0, "no se abre solo");
+    pt.llama("uiVerProblemas");
+    assert.ok(/^no se pudo aplicar: error: packet tracer no pudo abrirla \(3\)\n\n/.test(pt.blocs[0].texto), pt.blocs[0].texto);
 });
 
 prueba("módulo: si aplicar truena, los botones no se quedan apagados y se avisa", () => {
@@ -2200,7 +2383,10 @@ prueba("módulo: si aplicar truena, los botones no se quedan apagados y se avisa
     pt.roto = "Se Rompio";
     pt.correr();
     assert.strictEqual(pt.ultimaUi(), "fallo(true)");
-    assert.ok(/^no se pudo aplicar: error: se rompio\n$/.test(pt.blocs[pt.blocs.length - 1].texto), pt.blocs[pt.blocs.length - 1].texto);
+    assert.strictEqual(pt.aviso, "No se pudo aplicar (Ctrl+R)");
+    assert.strictEqual(pt.blocs.length, 0, "no se abre solo");
+    pt.llama("uiVerProblemas");
+    assert.strictEqual(pt.blocs[0].texto, "no se pudo aplicar: error: se rompio\n\nno se pudo leer la práctica: error: se rompio\n");
 });
 
 prueba("módulo: el pánico sin motivo lo dice y no toca nada", () => {
@@ -2214,10 +2400,24 @@ prueba("módulo: el pánico sin motivo lo dice y no toca nada", () => {
     assert.ok(/^mostrar\(/.test(pt.ultimaUi()), pt.ultimaUi());
 });
 
+prueba("módulo: el pánico no abre nada solo; lo que hizo va arriba en Ver", () => {
+    const pt = ptDeMentira(practica(R1_MUY_MAL, R2_MUY_MAL), "P1.pkt");
+    redDeMentira(pt, IPS_BIEN);
+    pt.abrir();
+    assert.ok(pt.ev("_CTX.combos.panico"), "aquí hace falta");
+    pt.llama("uiPanico");
+    pt.correr();
+    assert.ok(/^Pánico: .* \(Ctrl\+R\)$/.test(pt.aviso), pt.aviso);
+    assert.strictEqual(pt.blocs.length, 0);
+    pt.llama("uiVerProblemas");
+    assert.ok(/^pánico: /.test(pt.blocs[0].texto), pt.blocs[0].texto);
+});
+
 prueba("módulo: nombres de práctica raros no rompen la dirección del Bloc de notas", () => {
     const pt = ptDeMentira(practica(R1_BIEN, R2_BIEN), "C:\\saves\\P 1#ñ.pkt");
     pt.abrir();
-    assert.ok(/^file:\/\/\/T:\/temp\/P%201%23%C3%B1_comandos_\d{6}\.txt$/.test(pt.blocs[0].url), pt.blocs[0].url);
+    pt.llama("uiVerProblemas");
+    assert.ok(/^file:\/\/\/T:\/temp\/P%201%23%C3%B1_problemas_\d{6}\.txt$/.test(pt.blocs[0].url), pt.blocs[0].url);
 });
 
 console.log("%d pruebas bien", pruebas);

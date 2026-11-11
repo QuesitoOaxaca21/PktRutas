@@ -217,6 +217,7 @@ async function pruebas() {
     await clicEn("#panico");
     await clicEn("#aplicar");
     ok("botones deshabilitados no llaman a nadie", !(await llamadas()).length, await llamadas());
+    ok("ni colapsan la barra", !(await val("document.body.classList.contains('colapsada')")));
     ok("y se ven tenues", await estilo("#panico", "color") === "rgb(138, 138, 138)" && await estilo("#panico", "backgroundColor") === "rgba(0, 0, 0, 0)", await estilo("#panico", "backgroundColor"));
     await foto("apagados");
     await val("mostrar(__datos)");
@@ -312,10 +313,22 @@ async function pruebas() {
         await tecla(k, vk, mod);
         await espera(20);
         ok(nombre, await soloLlamo(f), await llamadas());
+        if (f === "uiAplicar") {
+            ok("y colapsa la barra, como el botón", await val("document.body.classList.contains('colapsada')"));
+            await val("expandir()");
+        }
     }
     await borrar();
     await clicEn("#aplicar");
     ok("el botón Aplicar", await soloLlamo("uiAplicar"), await llamadas());
+    const alAplicar = await llamadas();
+    ok("colapsa la barra antes de que empiece a teclear", await val("document.body.classList.contains('colapsada')")
+       && alAplicar.length === 2 && alAplicar[0][0] === "uiTamano" && alAplicar[0][1] <= 20 && alAplicar[0][2] === 24 && alAplicar[1][0] === "uiAplicar", alAplicar);
+    await seguirTamano();
+    ok("sólo queda el asa", await val("Array.prototype.filter.call(document.querySelectorAll('nav > *'),function(e){return e.offsetWidth>0;}).map(function(e){return e.id;}).join()") === "asa");
+    await foto("aplicando");
+    await val("expandir()");
+    await seguirTamano();
     await borrar();
     await clicEn("#panico");
     ok("el botón Pánico", await soloLlamo("uiPanico"), await llamadas());
@@ -335,6 +348,7 @@ async function pruebas() {
     await tecla("C", 67, CTRL | MAYUS);
     await tecla("S", 83, CTRL | MAYUS);
     ok("F5 y lo demás no interrumpen", !(await llamadas()).length, await llamadas());
+    ok("ni Aplicar otra vez colapsa la barra", !(await val("document.body.classList.contains('colapsada')")));
     await abrir("Archivo");
     await seguirTamano();
     ok("Volver a cargar, apagado", await val("document.querySelector('#desplegado .entrada').classList.contains('apagada')"));
@@ -482,6 +496,24 @@ async function pruebas() {
     await borrar();
     await val("expandir(true)");
     ok("el módulo la puede abrir", !(await colapsada()) && JSON.stringify((await llamadas()).pop()) === JSON.stringify(["uiTamano", ancho, 24]), await llamadas());
+
+    // Aplicar la colapsa y tarda: cómo terminó tiene que esperar a que la abran.
+    await seguirTamano();
+    await val("DURA_AVISO=500");
+    await clicEn("#aplicar");
+    await seguirTamano();
+    await val("avisar('DHCP: 3 de 6 PCs con IP...')");
+    await val("avisar('6 de 6 PCs con IP')");
+    await espera(700);
+    ok("colapsada, el aviso de cómo terminó no se va", await colapsada() && await val("document.getElementById('aviso').textContent") === "6 de 6 PCs con IP");
+    await clicEn("#asa");
+    const conAviso = await seguirTamano();
+    ok("se ve al abrirla", !(await colapsada()) && await estilo("#aviso", "display") === "block" && conAviso[2] === 23 + (await caja("#aviso")).h, conAviso);
+    await espera(150);
+    ok("y se queda su rato completo", await val("!document.getElementById('aviso').hidden"));
+    await espera(400);
+    ok("luego se va solo", await val("document.getElementById('aviso').hidden") && await altoPedido() === 24, await altoPedido());
+    await val("DURA_AVISO=6000");
 }
 
 async function main() {

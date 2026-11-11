@@ -4,8 +4,8 @@
 var ANCHO = 280, ALTO = 24; // hasta que la página diga cuánto mide, en sus píxeles
 var FONDO = 0xffffffff;     // para que no destelle en otro color mientras carga la página
 var CADA = 500;             // cada cuánto se mira si abrieron otra práctica, en ms
-var ENTRE_BLOCS = 800;      // entre los comandos y los problemas, para no abrirlos a la vez
 var PASADAS = 3;            // cuántas veces se aplica mientras siga faltando algo
+var VER = " (Ctrl+R)";      // al final de un aviso: Ver > Problemas tiene el detalle
 var PISTA = "Todavía no hay notas con VLANs en el lienzo.\n\n" +
     "Pon una nota por router, con su nombre y sus VLANs:\n\n" +
     "    R1\n\n    VLAN 2/22\n        11.0.4.0 - 11.0.7.254 - 255.255.252.0\n" +
@@ -13,8 +13,11 @@ var PISTA = "Todavía no hay notas con VLANs en el lienzo.\n\n" +
     "y otra junto a cada cable entre routers, con su enlace (.4).\n" +
     "Luego, Archivo > Volver a cargar (F5).";
 var ARCHIVO_MODO = "pktrutas_modo.txt";    // en la carpeta de usuario de Packet Tracer
-var _MENU = null, _VENTANA = null, _CTX = null, _BLOCS = {}, _REINTENTOS = null, _VIGIA = null, _LEIDO = "", _X = null, _Y = null, _ANCHO = 0, _ALTO = 0;
+var _MENU = null, _VENTANA = null, _CTX = null, _BLOC = null, _REINTENTOS = null, _VIGIA = null, _LEIDO = "", _X = null, _Y = null, _ANCHO = 0, _ALTO = 0;
 var _MODO = "activo";
+// El Bloc de notas sólo se abre cuando pides los problemas. Lo que dejó lo último que hiciste (lo
+// que IOS rechazó, las PCs sin IP, el pánico, un error) se guarda para entonces.
+var _HECHO = [], _FALLO_LEER = "";
 
 function main() {
     _cargarModo();
@@ -40,8 +43,7 @@ function abrirVentana() {
         // queda detrás ni tapa otras aplicaciones.
         _VENTANA.attachToMainViewArea();
         _colocar();
-        // Al volver a abrirla, sus Blocs de notas se abren otra vez.
-        _VENTANA.registerEvent("closed", null, function () { _VENTANA = null; _BLOCS = {}; });
+        _VENTANA.registerEvent("closed", null, function () { _VENTANA = null; });
         _VENTANA.show();
         _VENTANA.raise();
     } else {
@@ -166,7 +168,7 @@ function uiModo(m) {
     try {
         _leer();
     } catch (e) {
-        _fallo("No se pudo leer la práctica", e);
+        _falloLeer(e);
         return;
     }
     var estado = _estadoLeido();
@@ -181,7 +183,6 @@ function _vigilar() {
     _acomodar();        // por si Packet Tracer cambió de tamaño
     if (_idArchivo() !== _LEIDO) {
         _VENTANA.raise();
-        _BLOCS = {};
         _revisar(false);
     }
     _VIGIA = setTimeout(_vigilar, CADA);
@@ -203,19 +204,38 @@ function _pendiente() {
     if (pend && malos) { return pend + " por configurar, " + malos + (malos === 1 ? " se borra" : " se borran"); }
     if (pend) { return pend + (pend === 1 ? " equipo" : " equipos") + " por configurar"; }
     if (c.malos) { return c.malos + (c.malos === 1 ? " combo mal" : " combos mal") + " en las notas"; }
+    var r = _CTX.renombres.length;
+    if (r) { return r + (r === 1 ? " PC por renombrar" : " PCs por renombrar"); }
     return "No falta nada";
 }
 
 function _mostrar(mensaje) {
     _aviso(mensaje || _estadoLeido());
-    _aUi("mostrar", { pendientes: _CTX.bloques.length + (_CTX.inalambrico.pendiente ? 1 : 0), panico: _CTX.combos.panico, modo: _MODO });
+    _aUi("mostrar", { pendientes: _CTX.bloques.length + (_CTX.inalambrico.pendiente ? 1 : 0) + (_CTX.renombres.length ? 1 : 0),
+                      panico: _CTX.combos.panico, modo: _MODO });
 }
 
-// Lo que falló va al Bloc de notas, y en el aviso sólo que falló.
+// Lo que salió mal: el aviso dice qué, y Ver > Problemas el detalle.
 function _fallo(titulo, detalle) {
-    _aviso(titulo);
+    _anotar((titulo + ": " + detalle).toLowerCase());
+    _aviso(titulo + VER);
     _aUi("fallo", true);
-    _abrirBloc("problemas", (titulo + ": " + detalle).toLowerCase(), true);
+}
+
+// Sin la práctica leída no hay problemas que enseñar: Ver dice por qué no se pudo leer.
+function _falloLeer(e) {
+    _FALLO_LEER = ("no se pudo leer la práctica: " + e).toLowerCase();
+    _aviso("No se pudo leer la práctica" + VER);
+    _aUi("fallo", true);
+}
+
+function _anotar(texto) {
+    if (_HECHO.indexOf(texto) < 0) { _HECHO.push(texto); }
+}
+
+// Para el final de un aviso, si lo último que hiciste dejó algo en Ver > Problemas.
+function _pista() {
+    return _HECHO.length ? VER : "";
 }
 
 function uiLista() {
@@ -226,31 +246,20 @@ function uiLista() {
 
 function uiReleer() { _revisar(true); }
 
-// Abre lo que haya; lo que no cambió desde la última vez, sólo si se pide (siempre).
-function _revisar(siempre) {
+// Lee la práctica y dice en el aviso cómo va; no abre nada. Lo que dejó lo último que hiciste se
+// olvida al abrir otra práctica, o con F5 (reiniciar).
+function _revisar(reiniciar) {
+    if (reiniciar || _idArchivo() !== _LEIDO) {
+        _HECHO = [];
+        _BLOC = null;
+    }
     try {
         _leer();
     } catch (e) {
-        _fallo("No se pudo leer la práctica", e);
+        _falloLeer(e);
         return;
     }
     _mostrar();
-    var abrio = false;
-    if (_CTX.bloques.length || _CTX.inalambrico.pendiente) { abrio = _abrirBloc("comandos", _textoComandos(), siempre); }
-    if (hayProblemas(_CTX)) {
-        var texto = _textoProblemas();
-        // Los problemas al último: son los que deben quedar encima.
-        if (abrio) { setTimeout(function () { _abrirBloc("problemas", texto, siempre); }, ENTRE_BLOCS); }
-        else { _abrirBloc("problemas", texto, siempre); }
-    }
-}
-
-// Los comandos, y lo que no tiene comando (la controladora, el server y los teléfonos): eso no se
-// copia, porque no se puede pegar en ninguna consola.
-function _textoComandos() {
-    var partes = [textoBloques(_CTX.bloques).replace(/\n+$/, "")];
-    if (_CTX.inalambrico.pendiente) { partes.push("sin comandos, lo pone aplicar:\n\n" + textoInalambrico(_CTX.inalambrico).join("\n")); }
-    return partes.filter(function (x) { return x; }).join("\n" + SEPARADOR + "\n");
 }
 
 // Lo de la práctica abierta, o lo vuelve a leer si no se pudo antes. Si tampoco, null.
@@ -259,7 +268,7 @@ function _contexto() {
         try {
             _leer();
         } catch (e) {
-            _fallo("No se pudo leer la práctica", e);
+            _falloLeer(e);
         }
     }
     return _CTX;
@@ -270,40 +279,39 @@ function _comandos() {
     return _CTX.bloques.length ? _CTX.bloques : _CTX.completos;
 }
 
-// Lo que IOS rechazó, si lo hubo, va después de los problemas de las notas.
-function _textoProblemas(errores) {
+// Los problemas de las notas; al pie, lo que se supuso y lo inalámbrico que falta. Eso no lleva
+// comandos (aplicar lo escribe en la práctica): va aquí por si lo quieres ver, con sus mayúsculas.
+function _textoProblemas() {
     var partes = [textoProblemas(_CTX).replace(/\n+$/, "")];
-    if (errores && errores.length) { partes.push("ios rechazó:\n" + errores.join("\n")); }
     var supuestos = _CTX.plan.supuestos.concat(_CTX.correcciones.supuestos, _CTX.inalambrico.supuestos);
     if (supuestos.length) { partes.push("se supuso:\n" + supuestos.join("\n").toLowerCase()); }
+    if (_CTX.inalambrico.pendiente) { partes.push("lo inalámbrico lo pone aplicar, sin comandos:\n" + textoInalambrico(_CTX.inalambrico).join("\n")); }
     return partes.filter(function (p) { return p; }).join("\n\n") || "sin problemas";
 }
 
 // --- Bloc de notas ---------------------------------------------------------------------
 
-function _rutaBloc(tipo) {
+function _rutaBloc() {
     var nombre = _nombreArchivo().replace(/\.[^.]*$/, "") || "practica";
     var hora = new Date().toTimeString().substring(0, 8).replace(/:/g, "");
-    return ipc.appWindow().getTempFileLocation().replace(/\\/g, "/") + "/" + nombre + "_" + tipo + "_" + hora + ".txt";
+    return ipc.appWindow().getTempFileLocation().replace(/\\/g, "/") + "/" + nombre + "_problemas_" + hora + ".txt";
 }
 
-// Abre un texto si cambió desde la última vez de su tipo, o aunque no, si se pide (siempre).
-// Un texto nuevo va en un archivo nuevo: el Bloc de notas no vuelve a cargar el que ya tiene
-// abierto, y lo viejo que se quede en pantalla se podría pegar en un equipo.
-function _abrirBloc(tipo, texto, siempre) {
-    var antes = _BLOCS[tipo], igual = antes !== undefined && antes.texto === texto;
-    if (igual && !siempre) { return false; }
-    var ruta = igual ? antes.ruta : _rutaBloc(tipo);
+// Un texto nuevo va en un archivo nuevo: el Bloc de notas no vuelve a cargar el que ya tiene abierto.
+function _abrirBloc(texto) {
+    var igual = _BLOC !== null && _BLOC.texto === texto;
+    var ruta = igual ? _BLOC.ruta : _rutaBloc();
     if (!igual) { ipc.systemFileManager().writePlainTextToFile(ruta, texto.replace(/\n+$/, "") + "\n"); }
-    _BLOCS[tipo] = { texto: texto, ruta: ruta };
+    _BLOC = { texto: texto, ruta: ruta };
     ipc.appWindow().openURL("file:///" + encodeURI(ruta).replace(/#/g, "%23"));
-    return true;
 }
 
-// Sin notas, cómo escribirlas: es lo único que falta.
+// Lo único que abre el Bloc de notas. Arriba va lo que dejó lo último que hiciste, y luego los
+// problemas de las notas; sin notas, cómo escribirlas.
 function uiVerProblemas() {
-    if (!_contexto()) { return; }
-    _abrirBloc("problemas", _CTX.plan.sitios.length ? _textoProblemas() : PISTA, true);
+    var partes = _HECHO.slice();
+    partes.push(!_contexto() ? _FALLO_LEER : _CTX.plan.sitios.length ? _textoProblemas() : PISTA);
+    _abrirBloc(partes.join("\n\n"));
 }
 
 // --- copiar y guardar ------------------------------------------------------------------
@@ -475,15 +483,14 @@ function _pedirIps(intento, archivo, renovar) {
     var faltan = _pcsMal();
     if (!faltan.length) { faltan = _pcsConOtraPuerta(); }
     if (!faltan.length) {
-        _aviso(total + " de " + total + " PCs con IP");
+        _aviso(total + " de " + total + " PCs con IP" + _pista());
         return;
     }
     // Un teléfono tarda más: espera a que su AP se una a la controladora. Tras reabrir la práctica, con
     // el core arrancando, en Packet Tracer se midieron de 100 a 160 s.
     if (intento >= (faltan.some(function (p) { return p.telefono; }) ? 48 : 14)) {
-        _aviso((total - faltan.length) + " de " + total + " PCs con IP; revísalas");
-        _abrirBloc("problemas", "se pidió dhcp y estas pcs no quedaron en su red: "
-                   + faltan.map(function (p) { return p.pc; }).join(", ").toLowerCase() + "\n\n" + _textoProblemas(), false);
+        _anotar("se pidió dhcp y estas pcs no quedaron en su red: " + faltan.map(function (p) { return p.pc; }).join(", ").toLowerCase());
+        _aviso((total - faltan.length) + " de " + total + " PCs con IP; revísalas" + _pista());
         return;
     }
     _pedirDhcp(faltan);
@@ -496,6 +503,20 @@ function _ponerDhcp() {
         var d = p.telefono ? null : ipc.network().getDevice(p.pc);
         if (d && d.getDhcpFlag && !d.getDhcpFlag()) { d.setDhcpFlag(true); }
     });
+}
+
+// Las PCs que traían su VLAN en el nombre ('PC1 V3') vuelven a su nombre original en cuanto esa VLAN
+// quedó en su puerto: analizarXml las junta en `renombres`. Un nombre que ya es de otro, no.
+function _renombrar() {
+    var red = ipc.network(), hechas = 0;
+    _CTX.renombres.forEach(function (r) {
+        var d = red.getDevice(r.pc);
+        if (d && !red.getDevice(r.nuevo)) {
+            d.setName(r.nuevo);
+            hechas++;
+        }
+    });
+    return hechas;
 }
 
 // Lo que no tiene comando se escribe en la práctica y se vuelve a abrir desde memoria: los equipos
@@ -546,13 +567,15 @@ function _aplicarTodo(mensaje, alTerminar, opciones) {
             archivo = _LEIDO;
             releer();
         }
+        var renombradas = _renombrar();
+        if (renombradas) { releer(); }     // las PCs de DHCP, ya con su nombre
         var cuantos = Object.keys(borrados).length;
         var hecho = aplicados || !inalambrico ? "Aplicado a " + aplicados + (aplicados === 1 ? " equipo" : " equipos") + (inalambrico ? " y lo inalámbrico" : "")
             : "Aplicado lo inalámbrico";
-        _mostrar(mensaje || (_conModo(hecho + (cuantos ? ", " + cuantos + (cuantos === 1 ? " se borró" : " se borraron") : ""))
-                             + (inalambrico ? "; guarda la práctica" : "")));
-        // Con mensaje propio (el pánico) quien llama abre el Bloc de notas con su resumen.
-        if (!mensaje && (errores.length || hayProblemas(_CTX))) { _abrirBloc("problemas", _textoProblemas(errores), false); }
+        if (renombradas && !aplicados && !inalambrico) { hecho = renombradas + (renombradas === 1 ? " PC volvió a su nombre" : " PCs volvieron a su nombre"); }
+        if (errores.length) { _anotar("ios rechazó:\n" + errores.join("\n")); }
+        _mostrar((mensaje || (_conModo(hecho + (cuantos ? ", " + cuantos + (cuantos === 1 ? " se borró" : " se borraron") : ""))
+                              + (inalambrico ? "; guarda la práctica" : ""))) + _pista());
         if (_REINTENTOS !== null) { clearTimeout(_REINTENTOS); }
         _REINTENTOS = setTimeout(function () { _pedirIps(0, archivo, conPool); }, 3000);
         if (alTerminar) { alTerminar(errores); }
@@ -593,7 +616,9 @@ function _seguro(f) {
     };
 }
 
+// Empieza algo nuevo (aplicar, borrar todo, el pánico): lo que dejó lo anterior ya no cuenta.
 function _ocupado(texto) {
+    _HECHO = [];
     _aviso(texto);
     _aUi("ocupado", true);
 }
@@ -650,8 +675,8 @@ function uiPanico() {
             var sel = seleccionPanico(_CTX.combos);
             var antes = _CTX.combos.porcentaje;
             if (!sel.elegidos.length) {
-                _mostrar("Pánico: ningún error es pequeño");
-                _abrirBloc("problemas", "pánico: ningún error es pequeño, no se tocó nada\n\n" + _textoProblemas(), true);
+                _anotar("pánico: ningún error es pequeño, no se tocó nada");
+                _mostrar("Pánico: ningún error es pequeño" + _pista());
                 return;
             }
             var hechos = sel.elegidos.map(function (c) {
@@ -660,9 +685,8 @@ function uiPanico() {
             _reescribirNotas(notasCorregidas(sel.elegidos));
             _leer();
             var despues = _CTX.combos.porcentaje;
-            _aplicarTodo("Pánico: de " + antes + "% a " + despues + "% bien", function (errores) {
-                _abrirBloc("problemas", "pánico: de " + antes + "% a " + despues + "% de combos bien\n" + hechos.join("\n") + "\n\n" + _textoProblemas(errores), true);
-            });
+            _anotar("pánico: de " + antes + "% a " + despues + "% de combos bien\n" + hechos.join("\n"));
+            _aplicarTodo("Pánico: de " + antes + "% a " + despues + "% bien");
         } catch (e) {
             _fallo("Pánico: no se pudo", e);
         }

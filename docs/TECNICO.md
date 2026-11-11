@@ -379,6 +379,16 @@ una VLAN y un enlace encimados): eso no se arregla borrando. Una PC se reparte s
 una VLAN que ninguna nota dice; si otra nota la dice, se respeta: `P4_P3` tiene la V6 en R1 y R7,
 que llega a SWR1 por otro cable, con lo inalámbrico.
 
+**Notas de enlace repetidas.** Dos notas que piden el mismo /30 no se cumplen las dos (`EXP_P3` traía
+`.52` junto a R2–R4 y junto a R5–R6). `corregirEnlaces` las recorre en orden: primero la que dice el
+inicio de su bloque (`.44` antes que `.47`), luego la del cable que ya cuadra con ella por más lados
+(`_ladoCuadra`), y luego el orden de los cables. La que pierde queda en `repetidas`, y su cable va al
+primer /30 libre (`_sinIp`) si está vacío o si ya trae una IP dentro de la red de la otra. Antes ese
+segundo caso se quedaba así: la misma IP en dos routers, sin aviso, y las rutas que salían por ella
+eran del propio router e IOS las rechazaba. Si el cable ya funciona en otra red, se deja.
+`_avisarRepetidas` deja un solo aviso con las dos notas y la red en que quedó el cable; para esos
+cables se callan `_revisarNotas` y el "cae en" de `_sinIp`. El programa de escritorio no tiene esto.
+
 **Los modos de Aplicar.** `analizarXml(xml, { modo })` recibe `activo`, `estricto`, `medio` o `bajo`
 (`MODOS`, en `comandos.js`; cualquier otro es activo). En uno pasivo, `_pasivo` mide en la primera
 vuelta, sin nadie borrado, qué router o core cumple: `_empezado` (alguna IP, pool o ruta en su
@@ -405,9 +415,38 @@ bajo, SWR2 (un 3560 con su /30 malo) se borró, se reinició para IPv6 con sólo
 volver ya no contaba como empezado; sin `cumplian` se quedaba así, sin configurar.
 
 `ctx.pasivo` guarda `cumplen`, `noCumplen` y `faltas` (`[equipo, qué]`); `textoProblemas` las pone
-arriba de todo y `hayProblemas` las cuenta. `principal.js` guarda el modo en `pktrutas_modo.txt`, en
-`getUserFolder()` (si no, en la carpeta temporal), lo lee en `main()`, lo manda a la página con
-`modo(...)` y en `mostrar`, y `uiModo` lo cambia y vuelve a leer sin abrir el Bloc de notas.
+arriba de todo. `principal.js` guarda el modo en `pktrutas_modo.txt`, en `getUserFolder()` (si no, en
+la carpeta temporal), lo lee en `main()`, lo manda a la página con `modo(...)` y en `mostrar`, y
+`uiModo` lo cambia y vuelve a leer.
+
+**El Bloc de notas sólo se abre si lo pides** (lo pidió el usuario el 10-nov-2026): nada lo abre solo,
+ni al leer la práctica, ni al aplicar, ni el pánico, ni un error. El único que llama a `_abrirBloc` es
+`uiVerProblemas` (**Ver > Problemas**, `Ctrl+R`). Lo que antes se abría solo se guarda en `_HECHO` (lo
+que IOS rechazó, las PCs que no quedaron en su red, lo que hizo el pánico, un fallo) y Ver lo pone
+arriba de los problemas; el aviso de ese momento termina en `(Ctrl+R)` (`_pista`). `_HECHO` se vacía al
+empezar a aplicar, borrar todo o el pánico (`_ocupado`), con F5 y al abrir otra práctica; cambiar de
+modo no lo toca. Si no se pudo leer la práctica, Ver da `_FALLO_LEER`, que sólo vale mientras `_CTX`
+sea `null`: así un fallo viejo no se queda pegado cuando ya se lee bien. Lo inalámbrico que falta,
+que no lleva comandos, va al pie de los problemas, con sus mayúsculas (lleva la clave del portal). Los
+comandos ya no se abren: se copian (`Ctrl+Mayús+C`) o se guardan (`Ctrl+S`).
+
+**Las PCs vuelven a su nombre original al aplicar** (lo reportó el usuario el 11-nov-2026 en `EXP_P3`:
+el programa lo hacía desde la 1.0.0 en la copia configurada, `pkt/escribir.py`, y el módulo nunca lo
+tuvo). `analizarXml` junta en `ctx.renombres` las PCs con la VLAN en el nombre (`fuente` "nombre") cuya
+VLAN es de la nota de su sitio y ya está en su puerto de acceso (`accesoVlan`), y `nombreOriginal` les
+quita la VLAN como `nombre_original` en Python. `_renombrar` las cambia con `Device.setName` al final
+de `_aplicarTodo`, después de lo inalámbrico, y vuelve a leer: el DHCP se pide ya con el nombre nuevo.
+Con eso, al volver a leer, su VLAN sale del switch y el plan es el mismo; se midió en todas las prácticas
+guardadas (cinco con algo que renombrar, ninguna cambia ni las VLANs ni los comandos). Por eso no se
+renombra la que va en el equipo de la controladora: ahí `_repartirPcs` manda a la nativa a la más
+cercana que no diga su VLAN en el nombre, aunque su puerto diga otra. Tampoco donde el modo no toca
+(`puede`) ni si el nombre limpio ya es de otro equipo (`ctx.sinRenombre`, que sale en los problemas).
+Renombrar cuenta como pendiente: con sólo eso, Aplicar se habilita.
+
+**Aplicar colapsa la barra** (también lo pidió el 10-nov-2026), con el botón o con `Ctrl+Mayús+S`, y sólo
+si Aplicar está habilitado; Pánico y Borrar todo y aplicar no la tocan. Colapsada, el aviso no se ve,
+así que su tiempo no corre (`contarAviso`): el último, como "41 de 41 PCs con IP", espera a que la abran
+y se va a los 6 s de estar a la vista.
 
 Trampas de Packet Tracer 9.0.1, medidas en un equipo real:
 

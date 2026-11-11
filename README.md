@@ -28,20 +28,25 @@ Es una barra chica dentro del lienzo, en blanco como los menús de Packet Tracer
 **Archivo, Editar, Ver**, y a la derecha el modo (**Activo**), **Aplicar** y **Pánico**. No tiene
 ventana propia: se va con Packet Tracer y no tapa otras aplicaciones. Se mueve
 arrastrándola del asa de la izquierda. La flechita de junto la colapsa hasta dejar
-sólo el asa; con un clic en el asa se vuelve a abrir.
+sólo el asa; con un clic en el asa se vuelve a abrir. **Aplicar** también la colapsa,
+para que no estorbe mientras configura; lo que diga el aviso mientras tanto te espera
+hasta que la abras.
 
-Los comandos y los errores se abren en el Bloc de notas. Pasa solo al abrir una
-práctica, si hay algo que mostrar; si cambias las notas, **Archivo > Volver a cargar**
-(F5). Lo demás sale un momento en un renglón debajo de la barra: cuántos equipos
-faltan, cuántos copiaste, cuántas PCs ya tienen IP.
+El Bloc de notas sólo se abre cuando tú lo pides, con **Ver > Problemas** (`Ctrl+R`):
+nada se abre solo. Ahí van los problemas de las notas y, arriba, lo que dejó lo último
+que hiciste: lo que IOS rechazó, las PCs que no quedaron en su red, lo que corrigió el
+pánico o un error. Lo demás sale un momento en un renglón debajo de la barra: cuántos
+equipos faltan, cuántos copiaste, cuántas PCs ya tienen IP. Si ese renglón termina en
+`(Ctrl+R)`, hay algo que ver en los problemas. Si cambias las notas, **Archivo > Volver
+a cargar** (F5).
 
 | Atajo, con la barra en foco | Qué hace |
 | --- | --- |
-| `F5` | Volver a leer la práctica y abrir lo que haya |
+| `F5` | Volver a leer la práctica |
 | `Ctrl+R` | Los problemas, en el Bloc de notas |
 | `Ctrl+Mayús+C` | Copiar todos los equipos |
 | `Ctrl+S` | Guardar los comandos en un archivo |
-| `Ctrl+Mayús+S` | Aplicar a los equipos |
+| `Ctrl+Mayús+S` | Aplicar a los equipos (la barra se colapsa) |
 | `Ctrl+Q` | Cerrar la barra; se vuelve a abrir en **Extensions → PktRutas** |
 
 **Para instalarlo**, una vez en cada computadora:
@@ -75,6 +80,15 @@ programa la revisa. Los enlaces van como siempre, con su nota junto al cable
 (`.4`). Su IPv6 sale sola, el primer /127 libre de esa misma red: `::` para R1 y
 `::1` para R2; para pedir otra, escríbela en la nota: `.4 ABCD:AB:AC:AD::8/127`.
 
+Si dos notas de enlace piden el mismo /30 (`.52` junto a dos cables), una de las dos está mal.
+Se queda con él la que dice su inicio (`.44` le gana a `.47`); entre dos iguales, la del cable
+que ya está hecho como dice. El otro cable toma el primer /30 libre, aunque ya traiga la IP
+repetida, y **Ver > Problemas** nombra las dos notas para que corrijas una:
+
+```
+la nota '.52' junto al cable r5 ethernet0/0/0 - r6 fastethernet0/1 repite la red de la nota '.52' junto al cable r2 fastethernet0/0 - r4 fastethernet0/0 (14.0.0.52/30): a r5 - r6 le toca 14.0.0.56/30 hasta que corrijas una
+```
+
 **Qué revisa.** De cada combo se revisa que cuadre con su diagonal (que el bloque empiece
 donde debe, y el rango y la máscara), que no se encime con otra red o con un enlace, y que
 no se aleje más de un bloque de donde le toca por la cuenta.
@@ -87,8 +101,8 @@ no se aleje más de un bloque de donde le toca por la cuenta.
   ```
 
 * **Si no:** en IPv4 se reserva el DHCP de esa red; en IPv6, su dirección y sus
-  rutas. Lo demás sí se aplica, con los valores correctos. Se abre el Bloc de notas
-  con el problema, y si tu red cae encima de otra o de un enlace, dice de cuál:
+  rutas. Lo demás sí se aplica, con los valores correctos. **Ver > Problemas** lo
+  dice, y si tu red cae encima de otra o de un enlace, de cuál:
 
   ```
   r1 vlan 3: saltos erróneos, es 11.0.0.16 - 11.0.0.30, con máscara 255.255.255.240
@@ -138,8 +152,8 @@ equipo sin errores no se toca, así que lo que le hayas tecleado de más (una VL
 ejemplo) sigue ahí.
 
 Al terminar, las PCs del equipo al que se le puso su pool piden DHCP otra vez, y también cualquiera
-que siga con una IP o una puerta que no son las de su VLAN. Si alguna no queda bien, el Bloc de
-notas dice cuál.
+que siga con una IP o una puerta que no son las de su VLAN. Si alguna no queda bien, el aviso lo
+dice y **Ver > Problemas**, cuál.
 
 Lo que no se puede saber: si intercambias los hostnames de dos routers, la nota le toca al que trae
 ese nombre; y si una PC no dice su VLAN en el nombre, se le cree al puerto mientras esa VLAN
@@ -228,8 +242,8 @@ directo al switch core. Con eso, **Aplicar** pone:
 * **Teléfonos:** cada uno con la red de su AP más cercano, turnándose para que cada red tenga alguno,
   con `majli` / `majli`. Si su nombre dice una red, ésa.
 
-La controladora no tiene consola, así que eso no sale como comandos: va al pie de los comandos en el
-Bloc de notas, por si quieres verlo, pero no se copia. Para ponerlo, el módulo lo escribe en la
+La controladora no tiene consola, así que eso no sale como comandos: mientras falte, va al pie de
+**Ver > Problemas**, por si quieres verlo, pero no se copia. Para ponerlo, el módulo lo escribe en la
 práctica y la vuelve a abrir desde memoria: los equipos reinician con su configuración, y los
 teléfonos tardan de uno a tres minutos en conectarse. El archivo no se toca hasta que guardes.
 
@@ -237,7 +251,7 @@ teléfonos tardan de uno a tres minutos en conectarse. El archivo no se toca has
 Corrige en las notas sólo los errores pequeños, los que se justifican con el mismo
 combo (la red bien con la última o la máscara mal, o un salto de diferencia),
 empezando por los más chicos, hasta llegar al 70% de combos bien, y aplica. Con 8
-combos eso es 6 (75%). Los errores grandes no los toca, y el Bloc de notas dice qué
+combos eso es 6 (75%). Los errores grandes no los toca, y **Ver > Problemas** dice qué
 corrigió y qué falta.
 
 Si una PC no dice su VLAN en el nombre (`PC1 V3`), en el switch ni por su IP, se
@@ -245,6 +259,14 @@ reparten por orden de puerto, en partes iguales y las primeras VLANs con las que
 sobren: con 3 PCs y 2 VLANs, Fa0/2 y Fa0/3 van en la VLAN 2 y Fa0/4 en la VLAN 3.
 Contando todos los switches de ese router, cada VLAN de su nota se queda con al
 menos una PC; si no alcanzan, el Bloc de notas dice cuál se quedó sin ninguna.
+
+La PC que dice su VLAN en el nombre (`PC1 V3`) vuelve a su nombre original (`PC1`) al
+terminar **Aplicar**, en cuanto esa VLAN ya quedó en su puerto: ahí ya vive, y al volver a
+leer la práctica sale igual del switch. Si sólo falta eso, el aviso dice cuántas PCs faltan
+por renombrar y Aplicar las renombra. Se quedan como están la que va en el mismo switch que
+la controladora (sin el nombre, la más cercana pasaría a la nativa), la de una VLAN que
+ninguna nota dice, la de un router o core que no cumple el modo pasivo, y la que tendría el
+nombre de otro equipo; esta última aparece en **Ver > Problemas**.
 
 ## Instalación
 

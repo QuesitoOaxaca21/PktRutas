@@ -5,7 +5,7 @@
 <title>PktRutas</title>
 <style>
 /* Sólo la barra de herramientas, dentro del lienzo y con los colores de los menús de Packet
-   Tracer. Los comandos y los errores se abren en el Bloc de notas: de eso se encarga principal.js. */
+   Tracer. Los problemas se abren en el Bloc de notas sólo con Ver > Problemas: de eso se encarga principal.js. */
 :root {
     color-scheme: light;
     --barra: #ffffff; --menu: #f9f9f9; --texto: #000000; --tenue: #8a8a8a;
@@ -123,14 +123,20 @@ function fallo() {
     botones();
 }
 
-// Un renglón bajo la barra. Lo que sigue en curso termina en "..." y se queda; lo demás se va solo.
+// Un renglón bajo la barra. Lo que sigue en curso termina en "..." y se queda; lo demás se va solo
+// cuando lleva un rato a la vista. Con la barra colapsada no se ve: espera a que la abran.
 var DURA_AVISO = 6000, quitarAviso = null;
 function avisar(texto) {
-    clearTimeout(quitarAviso);
     $("aviso").textContent = texto;
     $("aviso").hidden = !texto;
     ajustarTamano();
-    if (texto && !/\.\.\.$/.test(texto)) {
+    contarAviso();
+}
+
+function contarAviso() {
+    clearTimeout(quitarAviso);
+    var texto = $("aviso").textContent;
+    if (texto && !/\.\.\.$/.test(texto) && !document.body.classList.contains("colapsada")) {
         quitarAviso = setTimeout(function () { avisar(""); }, DURA_AVISO);
     }
 }
@@ -174,18 +180,20 @@ function ajustarTamano() {
 }
 
 // Colapsada sólo queda el asa, en el mismo lugar. Los atajos siguen funcionando, y lo que
-// avise mientras tanto se ve al abrirla, si no se ha ido.
+// avise mientras tanto se ve al abrirla.
 function colapsar() {
     cerrarMenu();
     document.body.classList.add("colapsada");
     $("asa").title = "Clic para abrir la barra; arrastra para moverla";
     ajustarTamano();
+    contarAviso();
 }
 
 function expandir() {
     document.body.classList.remove("colapsada");
     $("asa").title = "Arrastra para mover la barra";
     ajustarTamano();
+    contarAviso();
 }
 
 // --- El menú -------------------------------------------------------------------------------
@@ -361,8 +369,12 @@ document.addEventListener("mouseup", function () {
 
 // --- Atajos y botones -------------------------------------------------------------------
 
+// Aplicar recoge la barra: mientras teclea en los equipos no estorba en el lienzo. Se vuelve a abrir
+// con un clic en el asa.
 function aplicar() {
-    if (!$("aplicar").disabled) { se("uiAplicar"); }
+    if ($("aplicar").disabled) { return; }
+    colapsar();
+    se("uiAplicar");
 }
 
 function panico() {
